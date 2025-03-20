@@ -1,4 +1,6 @@
-﻿using Unity.Mathematics;
+﻿using ScriptsSandbox.Util;
+using Sledge.Formats.Map.Objects;
+using Unity.Mathematics;
 using UnityEngine;
 using Plane = Unity.Mathematics.Geometry.Plane;
 
@@ -39,7 +41,7 @@ namespace Tools
             
             public float2 uvCoords(float3 point, BrushFaceAttributes attribs, float2 textureSize)
             {
-                float2 uv = (computeUVCoords(point, attribs.Scale()) + attribs.Offset()) / textureSize;
+                var uv = (computeUVCoords(point, attribs.Scale()) + attribs.Offset()) / textureSize;
                 return uv;
             }
             
@@ -136,11 +138,98 @@ namespace Tools
             public float2  Scale()  => new((float)XScale, (float)YScale);
             public float2  Offset() => new ((float)XOffset,(float) YOffset);
             public double2 Shift()  => new double2(XShift, YShift);
+            
+            public static BrushFaceAttributes GetFromFace(Face face)
+            {
+                return new BrushFaceAttributes
+                {
+                    // Map Surface properties to BrushFaceAttributes
+                    MaterialName    = face.TextureName,  // TextureName maps to MaterialName
+                    XOffset         = face.XShift,       // XShift likely aligns with XOffset
+                    YOffset         = face.YShift,       // YShift likely aligns with YOffset
+                    Rotation        = face.Rotation,     // Direct mapping
+                    XScale          = face.XScale,       // Direct mapping (float to double)
+                    YScale          = face.YScale,       // Direct mapping (float to double)
+                    XShift          = face.XShift,       // Direct mapping for non-Quake formats
+                    YShift          = face.YShift,       // Direct mapping for non-Quake formats
+                    SurfaceContents = face.ContentFlags, // ContentFlags maps to SurfaceContents
+                    SurfaceFlags    = face.SurfaceFlags, // Direct mapping
+                    SurfaceValue    = face.Value,        // Value maps to SurfaceValue
+                    Color           = default
+                };
+            }
         }
-        
+        private static readonly float3[] BaseAxes = new float3[]
+        {
+            // Original: (0.0f, 0.0f, 1.0f) - Z-up normal
+            // Transformed: (0.0f, 1.0f, 0.0f) - Y-up normal
+            new float3(0.0f, 1.0f, 0.0f),  // 0
+            
+            // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+            new float3(1.0f, 0.0f, 0.0f),  // 1
+            
+            // Original: (0.0f, -1.0f, 0.0f) - -Y forward vAxis
+            // Transformed: (0.0f, 0.0f, -1.0f) - -Z forward vAxis
+            new float3(0.0f, 0.0f, -1.0f), // 2
+            
+            // Original: (0.0f, 0.0f, -1.0f) - -Z down normal
+            // Transformed: (0.0f, -1.0f, 0.0f) - -Y down normal
+            new float3(0.0f, -1.0f, 0.0f), // 3
+            
+            // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+            new float3(1.0f, 0.0f, 0.0f),  // 4
+            
+            // Original: (0.0f, -1.0f, 0.0f) - -Y forward vAxis
+            // Transformed: (0.0f, 0.0f, -1.0f) - -Z forward vAxis
+            new float3(0.0f, 0.0f, -1.0f), // 5
+            
+            // Original: (1.0f, 0.0f, 0.0f) - X-right normal
+            new float3(1.0f, 0.0f, 0.0f),  // 6
+            
+            // Original: (0.0f, 1.0f, 0.0f) - Y-up uAxis
+            // Transformed: (0.0f, 0.0f, 1.0f) - Z-up uAxis
+            new float3(0.0f, 0.0f, 1.0f),  // 7
+            
+            // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+            // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+            new float3(0.0f, -1.0f, 0.0f), // 8
+            
+            // Original: (-1.0f, 0.0f, 0.0f) - -X left normal
+            new float3(-1.0f, 0.0f, 0.0f), // 9
+            
+            // Original: (0.0f, 1.0f, 0.0f) - Y-up uAxis
+            // Transformed: (0.0f, 0.0f, 1.0f) - Z-up uAxis
+            new float3(0.0f, 0.0f, 1.0f),  // 10
+            
+            // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+            // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+            new float3(0.0f, -1.0f, 0.0f), // 11
+            
+            // Original: (0.0f, 1.0f, 0.0f) - Y-up normal
+            // Transformed: (0.0f, 0.0f, 1.0f) - Z-up normal
+            new float3(0.0f, 0.0f, 1.0f),  // 12
+            
+            // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+            new float3(1.0f, 0.0f, 0.0f),  // 13
+            
+            // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+            // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+            new float3(0.0f, -1.0f, 0.0f), // 14
+            
+            // Original: (0.0f, -1.0f, 0.0f) - -Y down normal
+            // Transformed: (0.0f, 0.0f, -1.0f) - -Z down normal
+            new float3(0.0f, 0.0f, -1.0f), // 15
+            
+            // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+            new float3(1.0f, 0.0f, 0.0f),  // 16
+            
+            // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+            // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+            new float3(0.0f, -1.0f, 0.0f)  // 17
+        };
         // BaseAxes array that is used in the TrenchBroom implementation
         // This matches the axes array in ParaxialUVCoordSystem.cpp
-        private static readonly float3[] BaseAxes = new float3[]
+        private static readonly float3[] TBBaseAxes = new float3[]
         {
             new float3(0.0f, 0.0f, 1.0f),  // 0
             new float3(1.0f, 0.0f, 0.0f),  // 1

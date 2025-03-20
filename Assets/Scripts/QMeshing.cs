@@ -243,6 +243,13 @@ namespace ScriptsSandbox.Util
             }
             return center / vertices.Count;
         }
+
+        public static List<float3> RescaleVertices(List<float3> vertices, float scale)
+        {
+            for (int i = 0; i < vertices.Count; i++) 
+                vertices[i] *= scale;
+            return vertices;
+        }
         
         /// <summary>
         /// Sorts vertices in clockwise order around a normal, following the algorithm in the MAP file paper

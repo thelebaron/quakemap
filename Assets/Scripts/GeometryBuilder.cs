@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Mapping;
 using Sledge.Formats.Map.Objects;
+using Tools;
 using Unity.Mathematics;
 using UnityEngine;
 using Mesh = UnityEngine.Mesh;
@@ -9,7 +10,7 @@ using Mesh = UnityEngine.Mesh;
 namespace ScriptsSandbox.Util
 {
     [ExecuteAlways]
-    public class QuakeMapGenerator : MonoBehaviour
+    public class GeometryBuilder : MonoBehaviour
     {
         [SerializeField] private float    scale   = 0.03125f;
         [SerializeField] private Material defaultMaterial;
@@ -102,16 +103,20 @@ namespace ScriptsSandbox.Util
             }
             
             // Convert vertices from Sledge to Unity coordinate system (swap Y and Z)
-            var vertices = face.Vertices.Select(v => new float3(v.X, v.Z, v.Y) * scale).ToList();
-            var worldVertices = vertices.Select(v => v / scale).ToList();
+            var vertices = face.Vertices.Select(v => new float3(v.X, v.Z, v.Y)).ToList();
             
             // First calculate UVs for each vertex and store in a dictionary with the vertex as key
             var vertexToUV = new Dictionary<Vector3, Vector2>();
-            for (int i = 0; i < worldVertices.Count; i++)
+            for (int i = 0; i < vertices.Count; i++)
             {
-                var worldVertex = new Vector3(worldVertices[i].x, worldVertices[i].y, worldVertices[i].z);
-                var uv = TbMath.GetStandardUV(worldVertex, face, textureSize);
-                vertexToUV[new Vector3(vertices[i].x, vertices[i].y, vertices[i].z)] = uv;
+                var vertex = vertices[i];
+                
+                // Create the paraxial coordinate system
+                var    faceAttribs = Paraxial.BrushFaceAttributes.GetFromFace(face);
+                var    uvSystem    = new Paraxial.ParaxialUVCoordSystem(normal, faceAttribs);
+                float2 uv          = uvSystem.uvCoords(vertex, faceAttribs, textureSize);
+                
+                vertexToUV[vertex] = uv;
             }
             
             // Sort vertices in clockwise order for proper triangulation
@@ -137,6 +142,7 @@ namespace ScriptsSandbox.Util
                 triangles.Add(i);     // Swapped with i+1
             }
             
+            vertices = QMeshing.RescaleVertices(vertices, scale);
             // Convert to Vector3 for Unity mesh
             var verts = new List<Vector3>();
             for (int i = 0; i < vertices.Count; i++)
