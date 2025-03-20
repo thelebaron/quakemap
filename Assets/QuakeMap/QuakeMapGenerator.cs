@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using Mapping;
 using Sledge.Formats.Map.Objects;
 using Unity.Mathematics;
 using UnityEngine;
@@ -109,7 +110,7 @@ namespace ScriptsSandbox.QuakeMap
             for (int i = 0; i < worldVertices.Count; i++)
             {
                 var worldVertex = new Vector3(worldVertices[i].x, worldVertices[i].y, worldVertices[i].z);
-                var uv = TbMath.GetStandardUVSledge(worldVertex, face, textureSize);
+                var uv = Trenchbroom.GetParaxialUV(worldVertex, face, textureSize);
                 vertexToUV[new Vector3(vertices[i].x, vertices[i].y, vertices[i].z)] = uv;
             }
             

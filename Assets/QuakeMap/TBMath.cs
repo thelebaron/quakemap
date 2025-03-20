@@ -203,6 +203,7 @@ namespace ScriptsSandbox.QuakeMap
             return math.normalize(normal);
         }
         
+        // similar to func_godot with slightly different results
         public static float2 GetStandardUV(float3 vertex, Face face, int2 textureSize)
         {
             int textureWidth  = textureSize.x;
@@ -270,6 +271,7 @@ namespace ScriptsSandbox.QuakeMap
             return uvOut;
         }
         
+        // from func_godot
         public static float2 GetStandardUVSledge(float3 vertex, Face face, int2 textureSize)
         {
             int    textureWidth  = textureSize.x;
@@ -315,6 +317,7 @@ namespace ScriptsSandbox.QuakeMap
 
             return uvOut;
         }
+        
         
         public static float2 GetStandardUVOriginal(float3 vertex, brushFace face, int2 textureSize)
         {
