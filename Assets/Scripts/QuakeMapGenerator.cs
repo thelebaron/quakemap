@@ -6,7 +6,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using Mesh = UnityEngine.Mesh;
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     [ExecuteAlways]
     public class QuakeMapGenerator : MonoBehaviour
@@ -14,13 +14,13 @@ namespace ScriptsSandbox.QuakeMap
         [SerializeField] private float    scale   = 0.03125f;
         [SerializeField] private Material defaultMaterial;
 
-        private DefaultNamespace.QuakeMap QuakeMap;
+        private QuakeMap QuakeMap;
 
         private List<GameObject> generatedObjects = new List<GameObject>();
 
         private void OnEnable()
         {
-            QuakeMap = GetComponent<DefaultNamespace.QuakeMap>();
+            QuakeMap = GetComponent<QuakeMap>();
             QuakeMap.LoadMapFile();
 
             ClearGeneratedObjects();
@@ -110,7 +110,7 @@ namespace ScriptsSandbox.QuakeMap
             for (int i = 0; i < worldVertices.Count; i++)
             {
                 var worldVertex = new Vector3(worldVertices[i].x, worldVertices[i].y, worldVertices[i].z);
-                var uv = Trenchbroom.GetParaxialUV(worldVertex, face, textureSize);
+                var uv = TbMath.GetStandardUV(worldVertex, face, textureSize);
                 vertexToUV[new Vector3(vertices[i].x, vertices[i].y, vertices[i].z)] = uv;
             }
             

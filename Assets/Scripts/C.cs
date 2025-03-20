@@ -4,7 +4,7 @@ using Sledge.Formats.Map.Objects;
 using Unity.Mathematics;
 using Unity.Mathematics.Geometry;
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public static class C
     {

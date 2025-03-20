@@ -1,8 +1,8 @@
-﻿using ScriptsSandbox.QuakeMap;
+﻿using ScriptsSandbox.Util;
 using UnityEditor;
 using UnityEngine;
 
-namespace QuakeMap.Editor
+namespace MapTools.Editor
 {
     [CustomEditor(typeof(QuakeMapGenerator))]
     public class MapGeneratorInspector : UnityEditor.Editor

@@ -6,7 +6,7 @@ using UnityEngine;
 using Mesh = UnityEngine.Mesh;
 using Plane = Unity.Mathematics.Geometry.Plane;
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public static class TbMath
     {

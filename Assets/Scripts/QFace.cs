@@ -4,7 +4,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using Mesh = UnityEngine.Mesh;
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public class QFace : MonoBehaviour
     {

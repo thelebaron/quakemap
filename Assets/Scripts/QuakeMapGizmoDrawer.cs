@@ -1,6 +1,5 @@
 ﻿using System.IO;
 using System.Linq;
-using DefaultNamespace;
 using UnityEngine;
 using Sledge.Formats.Map.Formats;
 using Sledge.Formats.Map.Objects;
@@ -10,12 +9,12 @@ namespace QuakeMapVisualization
     [RequireComponent(typeof(QuakeMap))]
     public class QuakeMapGizmoVisualizer : MonoBehaviour
     {
-        public string   mapPath      = "Assets/Maps/rotation_uv.map";
-        public float    scale        = 0.03125f;
-        public Color    solidColor   = Color.green;
-        public Color    entityColor  = Color.yellow;
-        public bool     showNormals  = true;
-        public float    normalLength = 16f; // Length of normal visualization
+        public string                    mapPath      = "Assets/Maps/rotation_uv.map";
+        public float                     scale        = 0.03125f;
+        public Color                     solidColor   = Color.green;
+        public Color                     entityColor  = Color.yellow;
+        public bool                      showNormals  = true;
+        public float                     normalLength = 16f; // Length of normal visualization
         public QuakeMap QuakeMap;
         
         private void OnDrawGizmos()

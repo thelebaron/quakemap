@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using ScriptsSandbox.QuakeMap;
+using ScriptsSandbox.Util;
 using Sledge.Formats.Geometric;
 using Sledge.Formats.Map.Objects;
 using Unity.Mathematics;

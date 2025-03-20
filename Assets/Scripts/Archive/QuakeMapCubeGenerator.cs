@@ -1,7 +1,6 @@
 ﻿using System;
 using System.IO;
 using System.Numerics;
-using DefaultNamespace;
 using UnityEngine;
 using Sledge.Formats.Map.Formats;
 using Sledge.Formats.Map.Objects;
@@ -13,8 +12,8 @@ namespace QuakeMapTools
     {
         [Header("Cube Settings")]
         public UnityEngine.Vector3 cubeSize = new UnityEngine.Vector3(64, 64, 64);
-        public UnityEngine.Vector3 cubeOrigin  = UnityEngine.Vector3.zero;
-        public string              textureName = "128_honey_2";
+        public UnityEngine.Vector3       cubeOrigin  = UnityEngine.Vector3.zero;
+        public string                    textureName = "128_honey_2";
         public QuakeMap quakeMap;
         
         [ContextMenu("Add Cube To Map")]

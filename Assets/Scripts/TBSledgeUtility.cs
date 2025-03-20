@@ -5,7 +5,7 @@ using UnityEngine;
 
 // ReSharper disable RedundantNameQualifier
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public static class SledgeConversion
     {

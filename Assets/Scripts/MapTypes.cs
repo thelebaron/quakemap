@@ -4,7 +4,7 @@ using Unity.Mathematics;
 using Unity.Mathematics.Geometry;
 using Plane = UnityEngine.Plane;
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public class QPolygon
     {

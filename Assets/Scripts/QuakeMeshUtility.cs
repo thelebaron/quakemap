@@ -3,7 +3,7 @@ using Sledge.Formats.Map.Objects;
 using Unity.Mathematics;
 using UnityEngine;
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public static class QuakeMeshUtility
     {

@@ -9,7 +9,7 @@ using Unity.Mathematics.Geometry;
 
 // ReSharper disable InconsistentNaming
 
-namespace ScriptsSandbox.QuakeMap
+namespace ScriptsSandbox.Util
 {
     public static partial class Tb
     {
