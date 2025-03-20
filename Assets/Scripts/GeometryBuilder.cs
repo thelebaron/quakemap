@@ -115,7 +115,8 @@ namespace ScriptsSandbox.Util
                 var    faceAttribs = Paraxial.BrushFaceAttributes.GetFromFace(face);
                 var    uvSystem    = new Paraxial.ParaxialUVCoordSystem(normal, faceAttribs);
                 float2 uv          = uvSystem.uvCoords(vertex, faceAttribs, textureSize);
-                
+                // flip it for unity
+                uv.y               = -uv.y;
                 vertexToUV[vertex] = uv;
             }
             
@@ -148,6 +149,7 @@ namespace ScriptsSandbox.Util
             for (int i = 0; i < vertices.Count; i++)
                 verts.Add(vertices[i]);
 
+            
             mesh.SetVertices(verts);
             mesh.SetTriangles(triangles.ToArray(), 0);
             mesh.uv = uvs.ToArray();
