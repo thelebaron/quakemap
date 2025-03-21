@@ -1,0 +1,7971 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix. The content has been processed where security check has been disabled.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Security check has been disabled - content may contain sensitive information
+
+Additional Info:
+----------------
+
+================================================================
+Directory Structure
+================================================================
+BRUSH.C/
+  BRUSH.C
+BSP5.H/
+  BSP5.H
+CSG4.C/
+  CSG4.C
+MAKEFILE/
+  MAKEFILE
+MAP.C/
+  MAP.C
+MAP.H/
+  MAP.H
+MERGE.C/
+  MERGE.C
+NODRAW.C/
+  NODRAW.C
+OUTSIDE.C/
+  OUTSIDE.C
+PORTALS.C/
+  PORTALS.C
+QBSP.C/
+  QBSP.C
+QBSP.MAK/
+  QBSP.MAK
+REGION.C/
+  REGION.C
+SOLIDBSP.C/
+  SOLIDBSP.C
+SURFACES.C/
+  SURFACES.C
+TJUNC.C/
+  TJUNC.C
+WRITEBSP.C/
+  WRITEBSP.C
+
+================================================================
+Files
+================================================================
+
+================
+File: BRUSH.C/BRUSH.C
+================
+// brush.c
+
+#include "bsp5.h"
+
+int			numbrushplanes;
+plane_t		planes[MAX_MAP_PLANES];
+
+int			numbrushfaces;
+mface_t		faces[128];		// beveled clipping hull can generate many extra
+
+
+/*
+=================
+CheckFace
+
+Note: this will not catch 0 area polygons
+=================
+*/
+void CheckFace (face_t *f)
+{
+	int		i, j;
+	vec_t	*p1, *p2;
+	vec_t	d, edgedist;
+	vec3_t	dir, edgenormal, facenormal;
+	
+	if (f->numpoints < 3)
+		Error ("CheckFace: %i points",f->numpoints);
+		
+	VectorCopy (planes[f->planenum].normal, facenormal);
+	if (f->planeside)
+	{
+		VectorSubtract (vec3_origin, facenormal, facenormal);
+	}
+	
+	for (i=0 ; i<f->numpoints ; i++)
+	{
+		p1 = f->pts[i];
+
+		for (j=0 ; j<3 ; j++)
+			if (p1[j] > BOGUS_RANGE || p1[j] < -BOGUS_RANGE)
+				Error ("CheckFace: BUGUS_RANGE: %f",p1[j]);
+
+		j = i+1 == f->numpoints ? 0 : i+1;
+		
+	// check the point is on the face plane
+		d = DotProduct (p1, planes[f->planenum].normal) - planes[f->planenum].dist;
+		if (d < -ON_EPSILON || d > ON_EPSILON)
+			Error ("CheckFace: point off plane");
+	
+	// check the edge isn't degenerate
+		p2 = f->pts[j];
+		VectorSubtract (p2, p1, dir);
+		
+		if (VectorLength (dir) < ON_EPSILON)
+			Error ("CheckFace: degenerate edge");
+			
+		CrossProduct (facenormal, dir, edgenormal);
+		VectorNormalize (edgenormal);
+		edgedist = DotProduct (p1, edgenormal);
+		edgedist += ON_EPSILON;
+		
+	// all other points must be on front side
+		for (j=0 ; j<f->numpoints ; j++)
+		{
+			if (j == i)
+				continue;
+			d = DotProduct (f->pts[j], edgenormal);
+			if (d > edgedist)
+				Error ("CheckFace: non-convex");
+		}
+	}
+}
+
+
+//===========================================================================
+
+/*
+=================
+ClearBounds
+=================
+*/
+void ClearBounds (brushset_t *bs)
+{
+	int		i, j;
+	
+	for (j=0 ; j<NUM_HULLS ; j++)
+		for (i=0 ; i<3 ; i++)
+		{
+			bs->mins[i] = 99999;
+			bs->maxs[i] = -99999;
+		}
+}
+
+/*
+=================
+AddToBounds
+=================
+*/
+void AddToBounds (brushset_t *bs, vec3_t v)
+{
+	int		i;
+	
+	for (i=0 ; i<3 ; i++)
+	{
+		if (v[i] < bs->mins[i])
+			bs->mins[i] = v[i];
+		if (v[i] > bs->maxs[i])
+			bs->maxs[i] = v[i];
+	}
+}
+
+//===========================================================================
+
+int	PlaneTypeForNormal (vec3_t normal)
+{
+	float	ax, ay, az;
+	
+// NOTE: should these have an epsilon around 1.0?		
+	if (normal[0] == 1.0)
+		return PLANE_X;
+	if (normal[1] == 1.0)
+		return PLANE_Y;
+	if (normal[2] == 1.0)
+		return PLANE_Z;
+	if (normal[0] == -1.0 ||
+		normal[1] == -1.0 ||
+		normal[2] == -1.0)
+		Error ("PlaneTypeForNormal: not a canonical vector");
+		
+	ax = fabs(normal[0]);
+	ay = fabs(normal[1]);
+	az = fabs(normal[2]);
+	
+	if (ax >= ay && ax >= az)
+		return PLANE_ANYX;
+	if (ay >= ax && ay >= az)
+		return PLANE_ANYY;
+	return PLANE_ANYZ;
+}
+
+#define	DISTEPSILON		0.01
+#define	ANGLEEPSILON	0.00001
+
+void NormalizePlane (plane_t *dp)
+{
+	vec_t	ax, ay, az;
+	
+	if (dp->normal[0] == -1.0)
+	{
+		dp->normal[0] = 1.0;
+		dp->dist = -dp->dist;
+	}
+	if (dp->normal[1] == -1.0)
+	{
+		dp->normal[1] = 1.0;
+		dp->dist = -dp->dist;
+	}
+	if (dp->normal[2] == -1.0)
+	{
+		dp->normal[2] = 1.0;
+		dp->dist = -dp->dist;
+	}
+
+	if (dp->normal[0] == 1.0)
+	{
+		dp->type = PLANE_X;
+		return;
+	}
+	if (dp->normal[1] == 1.0)
+	{
+		dp->type = PLANE_Y;
+		return;
+	}
+	if (dp->normal[2] == 1.0)
+	{
+		dp->type = PLANE_Z;
+		return;
+	}
+
+	ax = fabs(dp->normal[0]);
+	ay = fabs(dp->normal[1]);
+	az = fabs(dp->normal[2]);
+
+	if (ax >= ay && ax >= az)
+		dp->type = PLANE_ANYX;
+	else if (ay >= ax && ay >= az)
+		dp->type = PLANE_ANYY;
+	else
+		dp->type = PLANE_ANYZ;
+	if (dp->normal[dp->type-PLANE_ANYX] < 0)
+	{
+		VectorSubtract (vec3_origin, dp->normal, dp->normal);
+		dp->dist = -dp->dist;
+	}
+
+}
+
+/*
+===============
+FindPlane
+
+Returns a global plane number and the side that will be the front
+===============
+*/
+int	FindPlane (plane_t *dplane, int *side)
+{
+	int			i;
+	plane_t		*dp, pl;
+	vec_t		dot;
+		
+	dot = VectorLength(dplane->normal);
+	if (dot < 1.0 - ANGLEEPSILON || dot > 1.0 + ANGLEEPSILON)
+		Error ("FindPlane: normalization error");
+	
+	pl = *dplane;
+	NormalizePlane (&pl);
+	if (DotProduct(pl.normal, dplane->normal) > 0)
+		*side = 0;
+	else
+		*side = 1;
+
+	dp = planes;	
+	for (i=0 ; i<numbrushplanes;i++, dp++)
+	{
+		dot = DotProduct (dp->normal, pl.normal);
+		if (dot > 1.0 - ANGLEEPSILON 
+		&& fabs(dp->dist - pl.dist) < DISTEPSILON )
+		{	// regular match
+			return i;		
+		}
+	}
+
+	if (numbrushplanes == MAX_MAP_PLANES)
+		Error ("numbrushplanes == MAX_MAP_PLANES");
+
+	planes[numbrushplanes] = pl;
+
+	numbrushplanes++;
+
+	return numbrushplanes-1;
+}
+
+
+/*
+===============
+FindPlane_old
+
+Returns a global plane number and the side that will be the front
+===============
+*/
+int	FindPlane_old (plane_t *dplane, int *side)
+{
+	int			i;
+	plane_t		*dp;
+	vec_t		dot, ax, ay, az;
+		
+	dot = VectorLength(dplane->normal);
+	if (dot < 1.0 - ANGLEEPSILON || dot > 1.0 + ANGLEEPSILON)
+		Error ("FindPlane: normalization error");
+	
+	dp = planes;
+	
+	for (i=0 ; i<numbrushplanes;i++, dp++)
+	{
+		dot = DotProduct (dplane->normal, dp->normal);
+		if (dot > 1.0 - ANGLEEPSILON 
+		&& fabs(dplane->dist - dp->dist) < DISTEPSILON )
+		{	// regular match
+			*side = 0;
+			return i;		
+		}
+		if (dot < -1.0+ANGLEEPSILON
+		&& fabs(dplane->dist + dp->dist) < DISTEPSILON )
+		{	// inverse of vector
+			*side = 1;
+			return i;
+		}
+	}
+	
+// allocate a new plane, flipping normal to a consistant direction
+// if needed
+	*dp = *dplane;
+	
+	if (numbrushplanes == MAX_MAP_PLANES)
+		Error ("numbrushplanes == MAX_MAP_PLANES");
+	numbrushplanes++;
+	
+	*side = 0;
+
+// NOTE: should these have an epsilon around 1.0?		
+	if (dplane->normal[0] == 1.0)
+		dp->type = PLANE_X;
+	else if (dplane->normal[1] == 1.0)
+		dp->type = PLANE_Y;
+	else if (dplane->normal[2] == 1.0)
+		dp->type = PLANE_Z;
+	else if (dplane->normal[0] == -1.0)
+	{
+		dp->type = PLANE_X;
+		dp->normal[0] = 1.0;
+		dp->dist = -dp->dist;
+		*side = 1;
+	}
+	else if (dplane->normal[1] == -1.0)
+	{
+		dp->type = PLANE_Y;
+		dp->normal[1] = 1.0;
+		dp->dist = -dp->dist;
+		*side = 1;
+	}
+	else if (dplane->normal[2] == -1.0)
+	{
+		dp->type = PLANE_Z;
+		dp->normal[2] = 1.0;
+		dp->dist = -dp->dist;
+		*side = 1;
+	}
+	else
+	{
+		ax = fabs(dplane->normal[0]);
+		ay = fabs(dplane->normal[1]);
+		az = fabs(dplane->normal[2]);
+		
+		if (ax >= ay && ax >= az)
+			dp->type = PLANE_ANYX;
+		else if (ay >= ax && ay >= az)
+			dp->type = PLANE_ANYY;
+		else
+			dp->type = PLANE_ANYZ;
+		if (dplane->normal[dp->type-PLANE_ANYX] < 0)
+		{
+			VectorSubtract (vec3_origin, dp->normal, dp->normal);
+			dp->dist = -dp->dist;
+			*side = 1;
+		}
+	}
+		
+	return i;
+}
+
+
+
+/*
+=============================================================================
+
+			TURN BRUSHES INTO GROUPS OF FACES
+
+=============================================================================
+*/
+
+vec3_t		brush_mins, brush_maxs;
+face_t		*brush_faces;
+
+/*
+=================
+CreateBrushFaces
+=================
+*/
+#define	ZERO_EPSILON	0.001
+void CreateBrushFaces (void)
+{
+	int				i,j, k;
+	vec_t			r;
+	face_t			*f;
+	winding_t		*w;
+	plane_t			plane;
+	mface_t			*mf;
+	
+	brush_mins[0] = brush_mins[1] = brush_mins[2] = 99999;
+	brush_maxs[0] = brush_maxs[1] = brush_maxs[2] = -99999;
+
+	brush_faces = NULL;
+	
+	for (i=0 ; i<numbrushfaces ; i++)
+	{
+		mf = &faces[i];
+		
+		w = BaseWindingForPlane (&mf->plane);
+
+		for (j=0 ; j<numbrushfaces && w ; j++)
+		{
+			if (j == i)
+				continue;
+		// flip the plane, because we want to keep the back side
+			VectorSubtract (vec3_origin,faces[j].plane.normal, plane.normal);
+			plane.dist = -faces[j].plane.dist;
+			
+			w = ClipWinding (w, &plane, false);
+		}
+		
+		if (!w)
+			continue;	// overcontrained plane
+			
+	// this face is a keeper
+		f = AllocFace ();
+		f->numpoints = w->numpoints;
+		if (f->numpoints > MAXEDGES)
+			Error ("f->numpoints > MAXEDGES");
+	
+		for (j=0 ; j<w->numpoints ; j++)
+		{
+			for (k=0 ; k<3 ; k++)
+			{
+				r = Q_rint (w->points[j][k]);
+				if ( fabs(w->points[j][k] - r) < ZERO_EPSILON)
+					f->pts[j][k] = r;
+				else
+					f->pts[j][k] = w->points[j][k];
+					
+				if (f->pts[j][k] < brush_mins[k])
+					brush_mins[k] = f->pts[j][k];
+				if (f->pts[j][k] > brush_maxs[k])
+					brush_maxs[k] = f->pts[j][k];				
+			}
+			
+		}
+		FreeWinding (w);
+		f->texturenum = mf->texinfo;
+		f->planenum = FindPlane (&mf->plane, &f->planeside);
+		f->next = brush_faces;
+		brush_faces = f;
+		CheckFace (f);
+	}	
+}
+
+
+
+/*
+==============================================================================
+
+BEVELED CLIPPING HULL GENERATION
+
+This is done by brute force, and could easily get a lot faster if anyone cares.
+==============================================================================
+*/
+
+vec3_t	hull_size[3][2] = {
+{ {0, 0, 0}, {0, 0, 0} },
+{ {-16,-16,-32}, {16,16,24} },
+{ {-32,-32,-64}, {32,32,24} }
+
+};
+
+#define	MAX_HULL_POINTS	32
+#define	MAX_HULL_EDGES	64
+
+int		num_hull_points;
+vec3_t	hull_points[MAX_HULL_POINTS];
+vec3_t	hull_corners[MAX_HULL_POINTS*8];
+int		num_hull_edges;
+int		hull_edges[MAX_HULL_EDGES][2];
+
+/*
+============
+AddBrushPlane
+=============
+*/
+void AddBrushPlane (plane_t *plane)
+{
+	int		i;
+	plane_t	*pl;
+	float	l;
+	
+	if (numbrushfaces == MAX_FACES)
+		Error ("AddBrushPlane: numbrushfaces == MAX_FACES");
+	l = VectorLength (plane->normal);
+	if (l < 0.999 || l > 1.001)
+		Error ("AddBrushPlane: bad normal");
+	
+	for (i=0 ; i<numbrushfaces ; i++)
+	{
+		pl = &faces[i].plane;
+		if (VectorCompare (pl->normal, plane->normal)
+		&& fabs(pl->dist - plane->dist) < ON_EPSILON )
+			return;
+	}
+	faces[i].plane = *plane;
+	faces[i].texinfo = faces[0].texinfo;
+	numbrushfaces++;
+}
+
+
+/*
+============
+TestAddPlane
+
+Adds the given plane to the brush description if all of the original brush
+vertexes can be put on the front side
+=============
+*/
+void TestAddPlane (plane_t *plane)
+{
+	int		i, c;
+	vec_t	d;
+	vec_t	*corner;
+	plane_t	flip;
+	vec3_t	inv;
+	int		counts[3];
+	plane_t	*pl;
+	
+// see if the plane has allready been added
+	for (i=0 ; i<numbrushfaces ; i++)
+	{
+		pl = &faces[i].plane;
+		if (VectorCompare (plane->normal, pl->normal) && fabs(plane->dist - pl->dist) < ON_EPSILON)
+			return;
+		VectorSubtract (vec3_origin, plane->normal, inv);
+		if (VectorCompare (inv, pl->normal) && fabs(plane->dist + pl->dist) < ON_EPSILON)
+			return;
+	}
+	
+// check all the corner points
+	counts[0] = counts[1] = counts[2] = 0;
+	c = num_hull_points * 8;
+	
+	corner = hull_corners[0];
+	for (i=0 ; i<c ; i++, corner += 3)
+	{
+		d = DotProduct (corner, plane->normal) - plane->dist;
+		if (d < -ON_EPSILON)
+		{
+			if (counts[0])
+				return;
+			counts[1]++;
+		}
+		else if (d > ON_EPSILON)
+		{
+			if (counts[1])
+				return;
+			counts[0]++;
+		}
+		else
+			counts[2]++;
+	}
+	
+// the plane is a seperator
+
+	if (counts[0])
+	{
+		VectorSubtract (vec3_origin, plane->normal, flip.normal);
+		flip.dist = -plane->dist;
+		plane = &flip;
+	}
+	
+	AddBrushPlane (plane);
+}
+
+/*
+============
+AddHullPoint
+
+Doesn't add if duplicated
+=============
+*/
+int AddHullPoint (vec3_t p, int hullnum)
+{
+	int		i;
+	vec_t	*c;
+	int		x,y,z;
+	
+	for (i=0 ; i<num_hull_points ; i++)
+		if (VectorCompare (p, hull_points[i]))
+			return i;
+			
+	VectorCopy (p, hull_points[num_hull_points]);
+	
+	c = hull_corners[i*8];
+	
+	for (x=0 ; x<2 ; x++)
+		for (y=0 ; y<2 ; y++)
+			for (z=0; z<2 ; z++)
+			{
+				c[0] = p[0] + hull_size[hullnum][x][0];
+				c[1] = p[1] + hull_size[hullnum][y][1];
+				c[2] = p[2] + hull_size[hullnum][z][2];
+				c += 3;
+			}
+	
+	if (num_hull_points == MAX_HULL_POINTS)
+		Error ("MAX_HULL_POINTS");
+
+	num_hull_points++;
+	
+	return i;
+}
+
+
+/*
+============
+AddHullEdge
+
+Creates all of the hull planes around the given edge, if not done allready
+=============
+*/
+void AddHullEdge (vec3_t p1, vec3_t p2, int hullnum)
+{
+	int		pt1, pt2;
+	int		i;
+	int		a, b, c, d, e;
+	vec3_t	edgevec, planeorg, planevec;
+	plane_t	plane;
+	vec_t	l;
+	
+	pt1 = AddHullPoint (p1, hullnum);
+	pt2 = AddHullPoint (p2, hullnum);
+	
+	for (i=0 ; i<num_hull_edges ; i++)
+		if ( (hull_edges[i][0] == pt1 && hull_edges[i][1] == pt2)
+		|| (hull_edges[i][0] == pt2 && hull_edges[i][1] == pt1) )
+			return;	// allread added
+		
+	if (num_hull_edges == MAX_HULL_EDGES)
+		Error ("MAX_HULL_EDGES");
+
+	hull_edges[i][0] = pt1;
+	hull_edges[i][1] = pt2;
+	num_hull_edges++;
+		
+	VectorSubtract (p1, p2, edgevec);
+	VectorNormalize (edgevec);
+	
+	for (a=0 ; a<3 ; a++)
+	{
+		b = (a+1)%3;
+		c = (a+2)%3;
+		for (d=0 ; d<=1 ; d++)
+			for (e=0 ; e<=1 ; e++)
+			{
+				VectorCopy (p1, planeorg);
+				planeorg[b] += hull_size[hullnum][d][b];
+				planeorg[c] += hull_size[hullnum][e][c];
+				
+				VectorCopy (vec3_origin, planevec);
+				planevec[a] = 1;
+				
+				CrossProduct (planevec, edgevec, plane.normal);
+				l = VectorLength (plane.normal);
+				if (l < 1-ANGLEEPSILON || l > 1+ANGLEEPSILON)
+					continue;
+				plane.dist = DotProduct (planeorg, plane.normal);				
+				TestAddPlane (&plane);
+			}
+	}
+	
+
+}		
+
+/*
+============
+ExpandBrush
+=============
+*/
+void ExpandBrush (int hullnum)
+{
+	int		i, x, s;
+	vec3_t	corner;
+	face_t	*f;
+	plane_t	plane, *p;
+
+	num_hull_points = 0;
+	num_hull_edges = 0;
+
+// create all the hull points
+	for (f=brush_faces ; f ; f=f->next)
+		for (i=0 ; i<f->numpoints ; i++)
+			AddHullPoint (f->pts[i], hullnum);
+
+// expand all of the planes
+	for (i=0 ; i<numbrushfaces ; i++)
+	{
+		p = &faces[i].plane;
+		VectorCopy (vec3_origin, corner);
+		for (x=0 ; x<3 ; x++)
+		{
+			if (p->normal[x] > 0)
+				corner[x] = hull_size[hullnum][1][x];
+			else if (p->normal[x] < 0)
+				corner[x] = hull_size[hullnum][0][x];
+		}
+		p->dist += DotProduct (corner, p->normal);		
+	}
+
+// add any axis planes not contained in the brush to bevel off corners
+	for (x=0 ; x<3 ; x++)
+		for (s=-1 ; s<=1 ; s+=2)
+		{
+		// add the plane
+			VectorCopy (vec3_origin, plane.normal);
+			plane.normal[x] = s;
+			if (s == -1)
+				plane.dist = -brush_mins[x] + -hull_size[hullnum][0][x];
+			else
+				plane.dist = brush_maxs[x] + hull_size[hullnum][1][x];
+			AddBrushPlane (&plane);
+		}
+
+// add all of the edge bevels
+	for (f=brush_faces ; f ; f=f->next)
+		for (i=0 ; i<f->numpoints ; i++)
+			AddHullEdge (f->pts[i], f->pts[(i+1)%f->numpoints], hullnum);
+}
+
+//============================================================================
+
+
+/*
+===============
+LoadBrush
+
+Converts a mapbrush to a bsp brush
+===============
+*/
+brush_t *LoadBrush (mbrush_t *mb, int hullnum)
+{
+	brush_t		*b;
+	int			contents;
+	char		*name;
+	mface_t		*f;
+
+//
+// check texture name for attributes
+//	
+	name = miptex[texinfo[mb->faces->texinfo].miptex];
+
+	if (!Q_strcasecmp(name, "clip") && hullnum == 0)
+		return NULL;		// "clip" brushes don't show up in the draw hull
+	
+	if (name[0] == '*' && worldmodel)		// entities never use water merging
+	{
+		if (!Q_strncasecmp(name+1,"lava",4))
+			contents = CONTENTS_LAVA;
+		else if (!Q_strncasecmp(name+1,"slime",5))
+			contents = CONTENTS_SLIME;
+		else			
+			contents = CONTENTS_WATER;
+	}
+	else if (!Q_strncasecmp (name, "sky",3) && worldmodel && hullnum == 0)
+		contents = CONTENTS_SKY;
+	else
+		contents = CONTENTS_SOLID;
+
+	if (hullnum && contents != CONTENTS_SOLID && contents != CONTENTS_SKY)
+		return NULL;		// water brushes don't show up in clipping hulls
+
+// no seperate textures on clip hull
+
+//
+// create the faces
+//
+	brush_faces = NULL;
+	
+	numbrushfaces = 0;
+	for (f=mb->faces ; f ; f=f->next)
+	{
+		faces[numbrushfaces] = *f;
+		if (hullnum)
+			faces[numbrushfaces].texinfo = 0;
+		numbrushfaces++;
+	}
+		
+	CreateBrushFaces ();
+	
+	if (!brush_faces)
+	{
+		printf ("WARNING: couldn't create brush faces\n");
+		return NULL;
+	}
+
+	if (hullnum)
+	{
+		ExpandBrush (hullnum);
+		CreateBrushFaces ();
+	}
+	
+//
+// create the brush
+//
+	b = AllocBrush ();
+	
+	b->contents = contents;
+	b->faces = brush_faces;
+	VectorCopy (brush_mins, b->mins);
+	VectorCopy (brush_maxs, b->maxs);
+
+	return b;
+}
+
+//=============================================================================
+
+
+/*
+============
+Brush_DrawAll
+
+============
+*/
+void Brush_DrawAll (brushset_t *bs)
+{
+	brush_t	*b;
+	face_t	*f;
+
+	for (b=bs->brushes ; b ; b=b->next)
+		for (f=b->faces ; f ; f=f->next)
+			Draw_DrawFace (f);	
+}
+
+
+/*
+============
+Brush_LoadEntity
+============
+*/
+brushset_t *Brush_LoadEntity (entity_t *ent, int hullnum)
+{
+	brush_t		*b, *next, *water, *other;
+	mbrush_t	*mbr;
+	int			numbrushes;
+	brushset_t	*bset;
+		
+	bset = malloc (sizeof(brushset_t));
+	memset (bset, 0, sizeof(brushset_t));
+	ClearBounds (bset);
+
+	numbrushes = 0;
+	other = water = NULL;
+
+	qprintf ("--- Brush_LoadEntity ---\n");
+
+	for (mbr = ent->brushes ; mbr ; mbr=mbr->next)
+	{
+		b = LoadBrush (mbr, hullnum);
+		if (!b)
+			continue;
+		
+		numbrushes++;
+
+		if (b->contents != CONTENTS_SOLID)
+		{
+			b->next = water;
+			water = b;
+		}
+		else
+		{
+			b->next = other;
+			other = b;
+		}
+	
+		AddToBounds (bset, b->mins);
+		AddToBounds (bset, b->maxs);
+	}
+
+// add all of the water textures at the start
+	for (b=water ; b ; b=next)
+	{
+		next = b->next;
+		b->next = other;
+		other = b;
+	}
+
+	bset->brushes = other;
+
+	brushset = bset;
+	Brush_DrawAll (bset);
+	
+	qprintf ("%i brushes read\n",numbrushes);
+	
+	return bset;
+}
+
+================
+File: BSP5.H/BSP5.H
+================
+// bsp5.h
+
+#include "cmdlib.h"
+#include "mathlib.h"
+#include "bspfile.h"
+
+typedef struct
+{
+	vec3_t	normal;
+	vec_t	dist;
+	int		type;
+} plane_t;
+
+
+#include "map.h"
+
+#define	MAX_THREADS	4
+
+#define	ON_EPSILON	0.05
+#define	BOGUS_RANGE	18000
+
+// the exact bounding box of the brushes is expanded some for the headnode
+// volume.  is this still needed?
+#define	SIDESPACE	24
+
+//============================================================================
+
+
+typedef struct
+{
+	int		numpoints;
+	vec3_t	points[8];			// variable sized
+} winding_t;
+
+#define MAX_POINTS_ON_WINDING	64
+
+winding_t *BaseWindingForPlane (plane_t *p);
+void CheckWinding (winding_t *w);
+winding_t	*NewWinding (int points);
+void		FreeWinding (winding_t *w);
+winding_t	*CopyWinding (winding_t *w);
+winding_t	*ClipWinding (winding_t *in, plane_t *split, qboolean keepon);
+void	DivideWinding (winding_t *in, plane_t *split, winding_t **front, winding_t **back);
+
+//============================================================================
+ 
+#define	MAXEDGES			32
+#define	MAXPOINTS			28		// don't let a base face get past this
+									// because it can be split more later
+
+typedef struct visfacet_s
+{
+	struct visfacet_s	*next;
+	
+	int				planenum;
+	int				planeside;	// which side is the front of the face
+	int				texturenum;
+	int				contents[2];	// 0 = front side
+
+	struct visfacet_s	*original;		// face on node
+	int				outputnumber;		// only valid for original faces after
+										// write surfaces
+	int				numpoints;
+	vec3_t			pts[MAXEDGES];		// FIXME: change to use winding_t
+	int				edges[MAXEDGES];
+} face_t;
+
+
+typedef struct surface_s
+{
+	struct surface_s	*next;
+	struct surface_s	*original;	// before BSP cuts it up
+	int			planenum;
+	int			outputplanenum;		// only valid after WriteSurfacePlanes
+	vec3_t		mins, maxs;
+	qboolean		onnode;				// true if surface has already been used
+									// as a splitting node
+	face_t		*faces;	// links to all the faces on either side of the surf
+} surface_t;
+
+
+//
+// there is a node_t structure for every node and leaf in the bsp tree
+//
+#define	PLANENUM_LEAF		-1
+
+typedef struct node_s
+{
+	vec3_t			mins,maxs;		// bounding volume, not just points inside
+
+// information for decision nodes	
+	int				planenum;		// -1 = leaf node	
+	int				outputplanenum;	// only valid after WriteNodePlanes
+	int				firstface;		// decision node only
+	int				numfaces;		// decision node only
+	struct node_s	*children[2];	// only valid for decision nodes
+	face_t			*faces;			// decision nodes only, list for both sides
+	
+// information for leafs
+	int				contents;		// leaf nodes (0 for decision nodes)
+	face_t			**markfaces;	// leaf nodes only, point to node faces
+	struct portal_s	*portals;
+	int				visleafnum;		// -1 = solid
+	int				valid;			// for flood filling
+	int				occupied;		// light number in leaf for outside filling
+} node_t;
+
+//=============================================================================
+
+// brush.c
+
+#define	NUM_HULLS		2				// normal and +16
+
+#define	NUM_CONTENTS	2				// solid and water
+
+typedef struct brush_s
+{
+	struct brush_s	*next;
+	vec3_t			mins, maxs;
+	face_t			*faces;
+	int				contents;
+} brush_t;
+
+typedef struct
+{
+	vec3_t		mins, maxs;
+	brush_t		*brushes;		// NULL terminated list
+} brushset_t;
+
+extern	int			numbrushplanes;
+extern	plane_t		planes[MAX_MAP_PLANES];
+
+brushset_t *Brush_LoadEntity (entity_t *ent, int hullnum);
+int	PlaneTypeForNormal (vec3_t normal);
+int	FindPlane (plane_t *dplane, int *side);
+
+//=============================================================================
+
+// csg4.c
+
+// build surfaces is also used by GatherNodeFaces
+extern	face_t	*validfaces[MAX_MAP_PLANES];
+surface_t *BuildSurfaces (void);
+
+face_t *NewFaceFromFace (face_t *in);
+surface_t *CSGFaces (brushset_t *bs);
+void SplitFace (face_t *in, plane_t *split, face_t **front, face_t **back);
+
+//=============================================================================
+
+// solidbsp.c
+
+void DivideFacet (face_t *in, plane_t *split, face_t **front, face_t **back);
+void CalcSurfaceInfo (surface_t *surf);
+void SubdivideFace (face_t *f, face_t **prevptr);
+node_t *SolidBSP (surface_t *surfhead, qboolean midsplit);
+
+//=============================================================================
+
+// merge.c
+
+void MergePlaneFaces (surface_t *plane);
+face_t *MergeFaceToList (face_t *face, face_t *list);
+face_t *FreeMergeListScraps (face_t *merged);
+void MergeAll (surface_t *surfhead);
+
+//=============================================================================
+
+// surfaces.c
+
+extern	int		c_cornerverts;
+extern	int		c_tryedges;
+extern	face_t		*edgefaces[MAX_MAP_EDGES][2];
+
+extern	int		firstmodeledge;
+extern	int		firstmodelface;
+
+void SubdivideFaces (surface_t *surfhead);
+
+surface_t *GatherNodeFaces (node_t *headnode);
+
+void MakeFaceEdges (node_t *headnode);
+
+//=============================================================================
+
+// portals.c
+
+typedef struct portal_s
+{
+	int			planenum;
+	node_t		*nodes[2];		// [0] = front side of planenum
+	struct portal_s	*next[2];	
+	winding_t	*winding;
+} portal_t;
+
+extern	node_t	outside_node;		// portals outside the world face this
+
+void PortalizeWorld (node_t *headnode);
+void WritePortalfile (node_t *headnode);
+void FreeAllPortals (node_t *node);
+
+//=============================================================================
+
+// region.c
+
+void GrowNodeRegions (node_t *headnode);
+
+//=============================================================================
+
+// tjunc.c
+
+void tjunc (node_t *headnode);
+
+//=============================================================================
+
+// writebsp.c
+
+void WriteNodePlanes (node_t *headnode);
+void WriteClipNodes (node_t *headnode);
+void WriteDrawNodes (node_t *headnode);
+
+void BumpModel (int hullnum);
+int FindFinalPlane (dplane_t *p);
+
+void BeginBSPFile (void);
+void FinishBSPFile (void);
+
+//=============================================================================
+
+// draw.c
+
+void Draw_ClearBounds (void);
+void Draw_AddToBounds (vec3_t v);
+void Draw_DrawFace (face_t *f);
+void Draw_ClearWindow (void);
+void Draw_SetRed (void);
+void Draw_SetGrey (void);
+void Draw_SetBlack (void);
+void DrawPoint (vec3_t v);
+
+void Draw_SetColor (int c);
+void SetColor (int c);
+void DrawPortal (portal_t *p);
+void DrawLeaf (node_t *l, int color);
+void DrawBrush (brush_t *b);
+
+void DrawWinding (winding_t *w);
+void DrawTri (vec3_t p1, vec3_t p2, vec3_t p3);
+
+//=============================================================================
+
+// outside.c
+
+qboolean FillOutside (node_t *node);
+
+//=============================================================================
+
+extern	qboolean	drawflag;
+extern	qboolean nofill;
+extern	qboolean notjunc;
+extern	qboolean noclip;
+extern	qboolean	verbose;
+
+extern	int		subdivide_size;
+
+extern	int		hullnum;
+
+extern	brushset_t	*brushset;
+
+void qprintf (char *fmt, ...);	// only prints if verbose
+
+extern	int		valid;
+
+extern	char	portfilename[1024];
+extern	char	bspfilename[1024];
+extern	char	pointfilename[1024];
+
+extern	qboolean	worldmodel;
+
+
+// misc functions
+
+face_t *AllocFace (void);
+void FreeFace (face_t *f);
+
+struct portal_s *AllocPortal (void);
+void FreePortal (struct portal_s *p);
+
+surface_t *AllocSurface (void);
+void FreeSurface (surface_t *s);
+
+node_t *AllocNode (void);
+struct brush_s *AllocBrush (void);
+
+//=============================================================================
+
+================
+File: CSG4.C/CSG4.C
+================
+// csg4.c
+
+#include "bsp5.h"
+
+/*
+
+NOTES
+-----
+Brushes that touch still need to be split at the cut point to make a tjunction
+
+*/
+
+face_t	*validfaces[MAX_MAP_PLANES];
+
+
+face_t	*inside, *outside;
+int		brushfaces;
+int		csgfaces;
+int		csgmergefaces;
+
+void DrawList (face_t *list)
+{
+	for ( ; list ; list=list->next)
+		Draw_DrawFace (list);
+}
+
+
+/*
+==================
+NewFaceFromFace
+
+Duplicates the non point information of a face, used by SplitFace and
+MergeFace.
+==================
+*/
+face_t *NewFaceFromFace (face_t *in)
+{
+	face_t	*newf;
+	
+	newf = AllocFace ();
+
+	newf->planenum = in->planenum;
+	newf->texturenum = in->texturenum;	
+	newf->planeside = in->planeside;
+	newf->original = in->original;
+	newf->contents[0] = in->contents[0];
+	newf->contents[1] = in->contents[1];
+	
+	return newf;
+}
+
+
+/*
+==================
+SplitFace
+
+==================
+*/
+void SplitFace (face_t *in, plane_t *split, face_t **front, face_t **back)
+{
+	vec_t	dists[MAXEDGES+1];
+	int		sides[MAXEDGES+1];
+	int		counts[3];
+	vec_t	dot;
+	int		i, j;
+	face_t	*newf, *new2;
+	vec_t	*p1, *p2;
+	vec3_t	mid;
+	
+	if (in->numpoints < 0)
+		Error ("SplitFace: freed face");
+	counts[0] = counts[1] = counts[2] = 0;
+
+// determine sides for each point
+	for (i=0 ; i<in->numpoints ; i++)
+	{
+		dot = DotProduct (in->pts[i], split->normal);
+		dot -= split->dist;
+		dists[i] = dot;
+		if (dot > ON_EPSILON)
+			sides[i] = SIDE_FRONT;
+		else if (dot < -ON_EPSILON)
+			sides[i] = SIDE_BACK;
+		else
+			sides[i] = SIDE_ON;
+		counts[sides[i]]++;
+	}
+	sides[i] = sides[0];
+	dists[i] = dists[0];
+	
+	if (!counts[0])
+	{
+		*front = NULL;
+		*back = in;
+		return;
+	}
+	if (!counts[1])
+	{
+		*front = in;
+		*back = NULL;
+		return;
+	}
+	
+	*back = newf = NewFaceFromFace (in);
+	*front = new2 = NewFaceFromFace (in);
+	
+// distribute the points and generate splits
+
+	for (i=0 ; i<in->numpoints ; i++)
+	{
+		if (newf->numpoints > MAXEDGES || new2->numpoints > MAXEDGES)
+			Error ("SplitFace: numpoints > MAXEDGES");
+
+		p1 = in->pts[i];
+		
+		if (sides[i] == SIDE_ON)
+		{
+			VectorCopy (p1, newf->pts[newf->numpoints]);
+			newf->numpoints++;
+			VectorCopy (p1, new2->pts[new2->numpoints]);
+			new2->numpoints++;
+			continue;
+		}
+	
+		if (sides[i] == SIDE_FRONT)
+		{
+			VectorCopy (p1, new2->pts[new2->numpoints]);
+			new2->numpoints++;
+		}
+		else
+		{
+			VectorCopy (p1, newf->pts[newf->numpoints]);
+			newf->numpoints++;
+		}
+		
+		if (sides[i+1] == SIDE_ON || sides[i+1] == sides[i])
+			continue;
+			
+	// generate a split point
+		p2 = in->pts[(i+1)%in->numpoints];
+		
+		dot = dists[i] / (dists[i]-dists[i+1]);
+		for (j=0 ; j<3 ; j++)
+		{	// avoid round off error when possible
+			if (split->normal[j] == 1)
+				mid[j] = split->dist;
+			else if (split->normal[j] == -1)
+				mid[j] = -split->dist;
+			else
+				mid[j] = p1[j] + dot*(p2[j]-p1[j]);
+		}
+	
+		VectorCopy (mid, newf->pts[newf->numpoints]);
+		newf->numpoints++;
+		VectorCopy (mid, new2->pts[new2->numpoints]);
+		new2->numpoints++;
+	}
+
+	if (newf->numpoints > MAXEDGES || new2->numpoints > MAXEDGES)
+		Error ("SplitFace: numpoints > MAXEDGES");
+
+#if 0	
+CheckFace (newf);
+CheckFace (new2);
+#endif
+
+// free the original face now that is is represented by the fragments
+	FreeFace (in);
+}
+
+/*
+=================
+ClipInside
+
+Clips all of the faces in the inside list, possibly moving them to the
+outside list or spliting it into a piece in each list.
+
+Faces exactly on the plane will stay inside unless overdrawn by later brush
+
+frontside is the side of the plane that holds the outside list
+=================
+*/
+void ClipInside (int splitplane, int frontside, qboolean precedence)
+{
+	face_t	*f, *next;
+	face_t	*frags[2];
+	face_t	*insidelist;
+	plane_t *split;
+	
+	split = &planes[splitplane];
+	
+	insidelist = NULL;
+	for (f=inside ; f ; f=next)
+	{
+		next = f->next;
+		
+		if (f->planenum == splitplane)
+		{	// exactly on, handle special
+			if ( frontside != f->planeside || precedence )
+			{	// allways clip off opposite faceing
+				frags[frontside] = NULL;
+				frags[!frontside] = f;
+			}
+			else
+			{	// leave it on the outside
+				frags[frontside] = f;
+				frags[!frontside] = NULL;
+			}
+		}
+		else
+		{	// proper split
+			SplitFace (f, split, &frags[0], &frags[1]);
+		}
+		
+		if (frags[frontside])
+		{
+			frags[frontside]->next = outside;
+			outside = frags[frontside];
+		}
+		if (frags[!frontside])
+		{
+			frags[!frontside]->next = insidelist;
+			insidelist = frags[!frontside];
+		}
+	}
+	
+	inside = insidelist;
+}
+
+
+/*
+==================
+SaveOutside
+
+Saves all of the faces in the outside list to the bsp plane list
+==================
+*/
+void SaveOutside (qboolean mirror)
+{
+	face_t	*f , *next, *newf;
+	int		i;
+	int		planenum;
+		
+	for (f=outside ; f ; f=next)
+	{
+		next = f->next;
+		csgfaces++;
+		Draw_DrawFace (f);
+		planenum = f->planenum;
+		
+		if (mirror)
+		{
+			newf = NewFaceFromFace (f);
+			
+			newf->numpoints = f->numpoints;
+			newf->planeside = f->planeside ^ 1;	// reverse side
+			newf->contents[0] = f->contents[1];
+			newf->contents[1] = f->contents[0];
+	
+			for (i=0 ; i<f->numpoints ; i++)	// add points backwards
+			{
+				VectorCopy (f->pts[f->numpoints-1-i], newf->pts[i]);
+			}
+		}
+		else
+			newf = NULL;
+
+		validfaces[planenum] = MergeFaceToList(f, validfaces[planenum]);
+		if (newf)
+			validfaces[planenum] = MergeFaceToList(newf, validfaces[planenum]);
+
+		validfaces[planenum] = FreeMergeListScraps (validfaces[planenum]);
+	}
+}
+
+/*
+==================
+FreeInside
+
+Free all the faces that got clipped out
+==================
+*/
+void FreeInside (int contents)
+{
+	face_t	*f, *next;
+	
+	for (f=inside ; f ; f=next)
+	{
+		next = f->next;
+		
+		if (contents != CONTENTS_SOLID)
+		{
+			f->contents[0] = contents;
+			f->next = outside;
+			outside = f;
+		}
+		else
+			FreeFace (f);
+	}
+}
+
+
+//==========================================================================
+
+/*
+==================
+BuildSurfaces
+
+Returns a chain of all the external surfaces with one or more visible
+faces.
+==================
+*/
+surface_t *BuildSurfaces (void)
+{
+	face_t			**f;
+	face_t			*count;
+	int				i;
+	surface_t		*s;
+	surface_t		*surfhead;
+	
+	surfhead = NULL;
+	
+	f = validfaces;
+	for (i=0 ; i<numbrushplanes ; i++, f++)
+	{
+		if (!*f)
+			continue;	// nothing left on this plane
+
+// create a new surface to hold the faces on this plane
+		s = AllocSurface ();
+		s->planenum = i;
+		s->next = surfhead;
+		surfhead = s;
+		s->faces = *f;
+		for (count = s->faces ; count ; count=count->next)
+			csgmergefaces++;
+		CalcSurfaceInfo (s);	// bounding box and flags
+	}	
+	
+	return surfhead;
+}
+
+//==========================================================================
+
+/*
+==================
+CopyFacesToOutside
+==================
+*/
+void CopyFacesToOutside (brush_t *b)
+{
+	face_t		*f, *newf;
+	
+	outside = NULL;
+	
+	for (f=b->faces ; f ; f=f->next)
+	{
+		brushfaces++;
+#if 0
+{
+	int		i;
+	
+	for (i=0 ; i<f->numpoints ; i++)
+		printf ("(%f,%f,%f) ",f->pts[i][0], f->pts[i][1], f->pts[i][2]);
+	printf ("\n");
+}
+#endif
+		newf = AllocFace ();
+		*newf = *f;
+		newf->next = outside;
+		newf->contents[0] = CONTENTS_EMPTY;
+		newf->contents[1] = b->contents;
+		outside = newf;
+	}
+}
+
+
+/*
+==================
+CSGFaces
+
+Returns a list of surfaces containing aall of the faces
+==================
+*/
+surface_t *CSGFaces (brushset_t *bs)
+{
+	brush_t		*b1, *b2;
+	int			i;
+	qboolean		overwrite;
+	face_t		*f;
+	surface_t	*surfhead;
+
+	qprintf ("---- CSGFaces ----\n");
+
+	memset (validfaces, 0, sizeof(validfaces));
+	
+	csgfaces = brushfaces = csgmergefaces = 0;
+	
+	Draw_ClearWindow ();
+	
+//
+// do the solid faces
+//
+	for (b1=bs->brushes ; b1 ; b1 = b1->next)
+	{
+	// set outside to a copy of the brush's faces
+		CopyFacesToOutside (b1);
+		
+		overwrite = false;
+		
+		for (b2=bs->brushes ; b2 ; b2 = b2->next)
+		{
+		// see if b2 needs to clip a chunk out of b1
+		
+			if (b1==b2)
+			{
+				overwrite = true;	// later brushes now overwrite
+				continue;
+			}
+
+		// check bounding box first
+			for (i=0 ; i<3 ; i++)
+				if (b1->mins[i] > b2->maxs[i] || b1->maxs[i] < b2->mins[i])
+					break;
+			if (i<3)
+				continue;
+
+		// divide faces by the planes of the new brush
+		
+			inside = outside;
+			outside = NULL;
+			
+			for (f=b2->faces ; f ; f=f->next)
+				ClipInside (f->planenum, f->planeside, overwrite);
+
+		// these faces are continued in another brush, so get rid of them
+			if (b1->contents == CONTENTS_SOLID && b2->contents <= CONTENTS_WATER)
+				FreeInside (b2->contents);
+			else
+				FreeInside (CONTENTS_SOLID);
+		}
+		
+	// all of the faces left in outside are real surface faces
+		if (b1->contents != CONTENTS_SOLID)
+			SaveOutside (true);	// mirror faces for inside view
+		else
+			SaveOutside (false);
+	}
+
+#if 0
+	if (!csgfaces)
+		Error ("No faces");
+#endif
+
+	surfhead = BuildSurfaces ();
+	
+	qprintf ("%5i brushfaces\n", brushfaces);
+	qprintf ("%5i csgfaces\n", csgfaces);
+	qprintf ("%5i mergedfaces\n", csgmergefaces);
+	
+	return surfhead;
+}
+
+================
+File: MAKEFILE/MAKEFILE
+================
+EXES = qbsp light vis bspinfo entmap visx
+NTEXES = qbsp.exe light.exe vis.exe bspinfo.exe entmap.exe visx.exe
+
+#==============================================================================
+
+EXT=	.o
+
+all: $(EXES)
+
+clean:
+	rm *.o *.obj $(EXES) $(NTEXES)
+
+next:
+	make "CFLAGS = -g -Wall -I.."
+
+nextinstall:
+	make "CFLAGS = -O4 -g -Wall  -I.. -arch i386 -arch hppa"
+	cp $(EXES) /LocalApps
+
+alpha:
+	make "CFLAGS = -g  -I.." "LDFLAGS = -lm"
+
+alphainstall:
+	make "CFLAGS = -O4  -I.." "LDFLAGS = -lm"
+	cp $(EXES) /LocalApps
+
+nt:
+	nmake /nologo "CFLAGS =  -nologo -Zi -DWIN32 -I.." "LDFLAGS = " "EXT = .obj"
+
+ntinstall:
+	nmake /nologo "CFLAGS =  -nologo -Ox -G5 -DWIN32 -I.." "LDFLAGS = " "EXT = .obj"
+	cp $(NTEXES) f:\nt\id
+
+#==============================================================================
+
+
+QBSPFILES = region$(EXT) map$(EXT) brush$(EXT) cmdlib$(EXT) csg4$(EXT) surfaces$(EXT) mathlib$(EXT)\
+         merge$(EXT) outside$(EXT) portals$(EXT) qbsp$(EXT) solidbsp$(EXT) tjunc$(EXT)\
+         writebsp$(EXT) bspfile$(EXT) nodraw$(EXT)
+qbsp : $(QBSPFILES)
+	$(CC) $(CFLAGS) -o qbsp $(QBSPFILES)
+
+light : threads$(EXT) bspfile$(EXT) cmdlib$(EXT) light$(EXT) ltface$(EXT) mathlib$(EXT) trace$(EXT) entities$(EXT)
+	$(CC) $(CFLAGS) -o light threads$(EXT) bspfile$(EXT) cmdlib$(EXT) light$(EXT) ltface$(EXT) mathlib$(EXT) trace$(EXT) entities$(EXT)
+	
+vis : vis$(EXT) flow$(EXT) cmdlib$(EXT) mathlib$(EXT) bspfile$(EXT) soundpvs$(EXT)
+	$(CC) $(CFLAGS) -o vis vis$(EXT) flow$(EXT) cmdlib$(EXT) mathlib$(EXT) bspfile$(EXT) soundpvs$(EXT)
+
+visx : visx$(EXT) flowx$(EXT) cmdlib$(EXT) mathlib$(EXT) bspfile$(EXT) soundpvs$(EXT)
+	$(CC) $(CFLAGS) -o visx visx$(EXT) flowx$(EXT) cmdlib$(EXT) mathlib$(EXT) bspfile$(EXT) soundpvs$(EXT)
+
+bspinfo : bspinfo$(EXT) bspfile$(EXT) cmdlib$(EXT)
+	$(CC) $(CFLAGS) -o bspinfo bspinfo$(EXT) bspfile$(EXT) cmdlib$(EXT)
+
+entmap : entmap$(EXT) cmdlib$(EXT)
+	$(CC) $(CFLAGS) -o entmap entmap$(EXT) cmdlib$(EXT)
+
+
+cmdlib$(EXT) : ../cmdlib.c
+	$(CC) $(CFLAGS) -c -o cmdlib$(EXT) ../cmdlib.c
+mathlib$(EXT) : ../mathlib.c
+	$(CC) $(CFLAGS) -c -o mathlib$(EXT) ../mathlib.c
+
+================
+File: MAP.C/MAP.C
+================
+// map.c
+
+#include "bsp5.h"
+
+int			nummapbrushes;
+mbrush_t	mapbrushes[MAX_MAP_BRUSHES];
+
+int			num_entities;
+entity_t	entities[MAX_MAP_ENTITIES];
+
+int			nummiptex;
+char		miptex[MAX_MAP_TEXINFO][16];
+
+//============================================================================
+
+/*
+===============
+FindMiptex
+
+===============
+*/
+int FindMiptex (char *name)
+{
+	int		i;
+	
+	for (i=0 ; i<nummiptex ; i++)
+	{
+		if (!strcmp (name, miptex[i]))
+			return i;
+	}
+	if (nummiptex == MAX_MAP_TEXINFO)
+		Error ("nummiptex == MAX_MAP_TEXINFO");
+	strcpy (miptex[i], name);
+	nummiptex++;
+	return i;
+}
+
+/*
+===============
+FindTexinfo
+
+Returns a global texinfo number
+===============
+*/
+int	FindTexinfo (texinfo_t *t)
+{
+	int			i, j;
+	texinfo_t	*tex;
+		
+// set the special flag
+	if (miptex[t->miptex][0] == '*' 
+	|| !Q_strncasecmp (miptex[t->miptex], "sky",3) )
+		t->flags |= TEX_SPECIAL;
+
+
+	tex = texinfo;	
+	for (i=0 ; i<numtexinfo;i++, tex++)
+	{
+		if (t->miptex != tex->miptex)
+			continue;
+		if (t->flags != tex->flags)
+			continue;
+		
+		for (j=0 ; j<8 ; j++)
+			if (t->vecs[0][j] != tex->vecs[0][j])
+				break;
+		if (j != 8)
+			continue;
+			
+		return i;
+	}
+	
+// allocate a new texture
+	if (numtexinfo == MAX_MAP_TEXINFO)
+		Error ("numtexinfo == MAX_MAP_TEXINFO");
+	texinfo[i] = *t;
+	numtexinfo++;
+
+	return i;
+}
+
+
+//============================================================================
+
+#define	MAXTOKEN	128
+
+char	token[MAXTOKEN];
+qboolean	unget;
+char	*script_p;
+int		scriptline;
+
+void	StartTokenParsing (char *data)
+{
+	scriptline = 1;
+	script_p = data;
+	unget = false;
+}
+
+qboolean GetToken (qboolean crossline)
+{
+	char    *token_p;
+
+	if (unget)                         // is a token allready waiting?
+		return true;
+
+//
+// skip space
+//
+skipspace:
+	while (*script_p <= 32)
+	{
+		if (!*script_p)
+		{
+			if (!crossline)
+				Error ("Line %i is incomplete",scriptline);
+			return false;
+		}
+		if (*script_p++ == '\n')
+		{
+			if (!crossline)
+				Error ("Line %i is incomplete",scriptline);
+			scriptline++;
+		}
+	}
+
+	if (script_p[0] == '/' && script_p[1] == '/')	// comment field
+	{
+		if (!crossline)
+			Error ("Line %i is incomplete\n",scriptline);
+		while (*script_p++ != '\n')
+			if (!*script_p)
+			{
+				if (!crossline)
+					Error ("Line %i is incomplete",scriptline);
+				return false;
+			}
+		goto skipspace;
+	}
+
+//
+// copy token
+//
+	token_p = token;
+
+	if (*script_p == '"')
+	{
+		script_p++;
+		while ( *script_p != '"' )
+		{
+			if (!*script_p)
+				Error ("EOF inside quoted token");
+			*token_p++ = *script_p++;
+			if (token_p > &token[MAXTOKEN-1])
+				Error ("Token too large on line %i",scriptline);
+		}
+		script_p++;
+	}
+	else while ( *script_p > 32 )
+	{
+		*token_p++ = *script_p++;
+		if (token_p > &token[MAXTOKEN-1])
+			Error ("Token too large on line %i",scriptline);
+	}
+
+	*token_p = 0;
+	
+	return true;
+}
+
+void UngetToken ()
+{
+	unget = true;
+}
+
+
+//============================================================================
+
+entity_t	*mapent;
+
+/*
+=================
+ParseEpair
+=================
+*/
+void ParseEpair (void)
+{
+	epair_t	*e;
+	
+	e = malloc (sizeof(epair_t));
+	memset (e, 0, sizeof(epair_t));
+	e->next = mapent->epairs;
+	mapent->epairs = e;
+	
+	if (strlen(token) >= MAX_KEY-1)
+		Error ("ParseEpar: token too long");
+	e->key = copystring(token);
+	GetToken (false);
+	if (strlen(token) >= MAX_VALUE-1)
+		Error ("ParseEpar: token too long");
+	e->value = copystring(token);
+}
+
+//============================================================================
+
+
+/*
+==================
+textureAxisFromPlane
+==================
+*/
+vec3_t	baseaxis[18] =
+{
+{0,0,1}, {1,0,0}, {0,-1,0},			// floor
+{0,0,-1}, {1,0,0}, {0,-1,0},		// ceiling
+{1,0,0}, {0,1,0}, {0,0,-1},			// west wall
+{-1,0,0}, {0,1,0}, {0,0,-1},		// east wall
+{0,1,0}, {1,0,0}, {0,0,-1},			// south wall
+{0,-1,0}, {1,0,0}, {0,0,-1}			// north wall
+};
+
+void TextureAxisFromPlane(plane_t *pln, vec3_t xv, vec3_t yv)
+{
+	int		bestaxis;
+	float	dot,best;
+	int		i;
+	
+	best = 0;
+	bestaxis = 0;
+	
+	for (i=0 ; i<6 ; i++)
+	{
+		dot = DotProduct (pln->normal, baseaxis[i*3]);
+		if (dot > best)
+		{
+			best = dot;
+			bestaxis = i;
+		}
+	}
+	
+	VectorCopy (baseaxis[bestaxis*3+1], xv);
+	VectorCopy (baseaxis[bestaxis*3+2], yv);
+}
+
+
+//=============================================================================
+
+
+/*
+=================
+ParseBrush
+=================
+*/
+void ParseBrush (void)
+{
+	mbrush_t		*b;
+	mface_t		*f, *f2;
+	vec3_t		planepts[3];
+	vec3_t			t1, t2, t3;
+	int			i,j;
+	texinfo_t	tx;
+	vec_t		d;
+	float		shift[2], rotate, scale[2];
+
+	b = &mapbrushes[nummapbrushes];
+	nummapbrushes++;
+	b->next = mapent->brushes;
+	mapent->brushes = b;
+		
+	do
+	{
+		if (!GetToken (true))
+			break;
+		if (!strcmp (token, "}") )
+			break;
+		
+	// read the three point plane definition
+		for (i=0 ; i<3 ; i++)
+		{
+			if (i != 0)
+				GetToken (true);
+			if (strcmp (token, "(") )
+				Error ("parsing brush");
+			
+			for (j=0 ; j<3 ; j++)
+			{
+				GetToken (false);
+				planepts[i][j] = atoi(token);
+			}
+			
+			GetToken (false);
+			if (strcmp (token, ")") )
+				Error ("parsing brush");
+				
+		}
+
+	// read the texturedef
+		memset (&tx, 0, sizeof(tx));
+		GetToken (false);
+		tx.miptex = FindMiptex (token);
+		GetToken (false);
+		shift[0] = atoi(token);
+		GetToken (false);
+		shift[1] = atoi(token);
+		GetToken (false);
+		rotate = atoi(token);	
+		GetToken (false);
+		scale[0] = atof(token);
+		GetToken (false);
+		scale[1] = atof(token);
+
+		// if the three points are all on a previous plane, it is a
+		// duplicate plane
+		for (f2 = b->faces ; f2 ; f2=f2->next)
+		{
+			for (i=0 ; i<3 ; i++)
+			{
+				d = DotProduct(planepts[i],f2->plane.normal) - f2->plane.dist;
+				if (d < -ON_EPSILON || d > ON_EPSILON)
+					break;
+			}
+			if (i==3)
+				break;
+		}
+		if (f2)		
+		{
+			printf ("WARNING: brush with duplicate plane\n");
+			continue;
+		}
+
+		f = malloc(sizeof(mface_t));
+		f->next = b->faces;
+		b->faces = f;
+		
+	// convert to a vector / dist plane
+		for (j=0 ; j<3 ; j++)
+		{
+			t1[j] = planepts[0][j] - planepts[1][j];
+			t2[j] = planepts[2][j] - planepts[1][j];
+			t3[j] = planepts[1][j];
+		}
+		
+		CrossProduct(t1,t2, f->plane.normal);
+		if (VectorCompare (f->plane.normal, vec3_origin))
+		{
+			printf ("WARNING: brush plane with no normal\n");
+			b->faces = f->next;
+			free (f);
+			break;
+		}
+		VectorNormalize (f->plane.normal);
+		f->plane.dist = DotProduct (t3, f->plane.normal);
+
+	//
+	// fake proper texture vectors from QuakeEd style
+	//
+		{
+			vec3_t	vecs[2];
+			int		sv, tv;
+			float	ang, sinv, cosv;
+			float	ns, nt;
+			
+			TextureAxisFromPlane(&f->plane, vecs[0], vecs[1]);
+		
+			if (!scale[0])
+				scale[0] = 1;
+			if (!scale[1])
+				scale[1] = 1;
+		
+		
+		// rotate axis
+			if (rotate == 0)
+				{ sinv = 0 ; cosv = 1; }
+			else if (rotate == 90)
+				{ sinv = 1 ; cosv = 0; }
+			else if (rotate == 180)
+				{ sinv = 0 ; cosv = -1; }
+			else if (rotate == 270)
+				{ sinv = -1 ; cosv = 0; }
+			else
+			{	
+				ang = rotate / 180 * Q_PI;
+				sinv = sin(ang);
+				cosv = cos(ang);
+			}
+		
+			if (vecs[0][0])
+				sv = 0;
+			else if (vecs[0][1])
+				sv = 1;
+			else
+				sv = 2;
+						
+			if (vecs[1][0])
+				tv = 0;
+			else if (vecs[1][1])
+				tv = 1;
+			else
+				tv = 2;
+							
+			for (i=0 ; i<2 ; i++)
+			{
+				ns = cosv * vecs[i][sv] - sinv * vecs[i][tv];
+				nt = sinv * vecs[i][sv] +  cosv * vecs[i][tv];
+				vecs[i][sv] = ns;
+				vecs[i][tv] = nt;
+			}
+		
+			for (i=0 ; i<2 ; i++)
+				for (j=0 ; j<3 ; j++)
+					tx.vecs[i][j] = vecs[i][j] / scale[i];
+		
+			tx.vecs[0][3] = shift[0];
+			tx.vecs[1][3] = shift[1];
+		}
+	
+	// unique the texinfo
+		f->texinfo = FindTexinfo (&tx);		
+	} while (1);
+}
+
+/*
+================
+ParseEntity
+================
+*/
+qboolean	ParseEntity (void)
+{
+	if (!GetToken (true))
+		return false;
+
+	if (strcmp (token, "{") )
+		Error ("ParseEntity: { not found");
+	
+	if (num_entities == MAX_MAP_ENTITIES)
+		Error ("num_entities == MAX_MAP_ENTITIES");
+
+	mapent = &entities[num_entities];
+	num_entities++;
+	
+	do
+	{
+		if (!GetToken (true))
+			Error ("ParseEntity: EOF without closing brace");
+		if (!strcmp (token, "}") )
+			break;
+		if (!strcmp (token, "{") )
+			ParseBrush ();
+		else
+			ParseEpair ();
+	} while (1);
+	
+	GetVectorForKey (mapent, "origin", mapent->origin);
+	return true;
+}
+
+/*
+================
+LoadMapFile
+================
+*/
+void LoadMapFile (char *filename)
+{
+	char	*buf;
+		
+	LoadFile (filename, (void **)&buf);
+
+	StartTokenParsing (buf);
+	
+	num_entities = 0;
+	
+	while (ParseEntity ())
+	{
+	}
+	
+	free (buf);
+	
+	qprintf ("--- LoadMapFile ---\n");
+	qprintf ("%s\n", filename);
+	qprintf ("%5i brushes\n", nummapbrushes);
+	qprintf ("%5i entities\n", num_entities);
+	qprintf ("%5i miptex\n", nummiptex);
+	qprintf ("%5i texinfo\n", numtexinfo);
+}
+
+void PrintEntity (entity_t *ent)
+{
+	epair_t	*ep;
+	
+	for (ep=ent->epairs ; ep ; ep=ep->next)
+		printf ("%20s : %s\n", ep->key, ep->value);
+}
+
+
+char 	*ValueForKey (entity_t *ent, char *key)
+{
+	epair_t	*ep;
+	
+	for (ep=ent->epairs ; ep ; ep=ep->next)
+		if (!strcmp (ep->key, key) )
+			return ep->value;
+	return "";
+}
+
+void 	SetKeyValue (entity_t *ent, char *key, char *value)
+{
+	epair_t	*ep;
+	
+	for (ep=ent->epairs ; ep ; ep=ep->next)
+		if (!strcmp (ep->key, key) )
+		{
+			free (ep->value);
+			ep->value = copystring(value);
+			return;
+		}
+	ep = malloc (sizeof(*ep));
+	ep->next = ent->epairs;
+	ent->epairs = ep;
+	ep->key = copystring(key);
+	ep->value = copystring(value);
+}
+
+float	FloatForKey (entity_t *ent, char *key)
+{
+	char	*k;
+	
+	k = ValueForKey (ent, key);
+	return atof(k);
+}
+
+void 	GetVectorForKey (entity_t *ent, char *key, vec3_t vec)
+{
+	char	*k;
+	double	v1, v2, v3;
+
+	k = ValueForKey (ent, key);
+	v1 = v2 = v3 = 0;
+// scanf into doubles, then assign, so it is vec_t size independent
+	sscanf (k, "%lf %lf %lf", &v1, &v2, &v3);
+	vec[0] = v1;
+	vec[1] = v2;
+	vec[2] = v3;
+}
+
+
+void WriteEntitiesToString (void)
+{
+	char	*buf, *end;
+	epair_t	*ep;
+	char	line[128];
+	int		i;
+	
+	buf = dentdata;
+	end = buf;
+	*end = 0;
+	
+	for (i=0 ; i<num_entities ; i++)
+	{
+		ep = entities[i].epairs;
+		if (!ep)
+			continue;	// ent got removed
+		
+		strcat (end,"{\n");
+		end += 2;
+				
+		for (ep = entities[i].epairs ; ep ; ep=ep->next)
+		{
+			sprintf (line, "\"%s\" \"%s\"\n", ep->key, ep->value);
+			strcat (end, line);
+			end += strlen(line);
+		}
+		strcat (end,"}\n");
+		end += 2;
+
+		if (end > buf + MAX_MAP_ENTSTRING)
+			Error ("Entity text too long");
+	}
+	entdatasize = end - buf + 1;
+}
+
+================
+File: MAP.H/MAP.H
+================
+#define	MAX_FACES		16
+typedef struct mface_s
+{
+	struct mface_s	*next;
+	plane_t			plane;
+	int				texinfo;
+} mface_t;
+
+typedef struct mbrush_s
+{
+	struct mbrush_s	*next;
+	mface_t *faces;
+} mbrush_t;
+
+typedef struct epair_s
+{
+	struct epair_s	*next;
+	char	*key;
+	char	*value;
+} epair_t;
+
+typedef struct
+{
+	vec3_t		origin;
+	mbrush_t		*brushes;
+	epair_t		*epairs;
+} entity_t;
+
+extern	int			nummapbrushes;
+extern	mbrush_t	mapbrushes[MAX_MAP_BRUSHES];
+
+extern	int			num_entities;
+extern	entity_t	entities[MAX_MAP_ENTITIES];
+
+extern	int			nummiptex;
+extern	char		miptex[MAX_MAP_TEXINFO][16];
+
+void 	LoadMapFile (char *filename);
+
+int		FindMiptex (char *name);
+
+void	PrintEntity (entity_t *ent);
+char 	*ValueForKey (entity_t *ent, char *key);
+void	SetKeyValue (entity_t *ent, char *key, char *value);
+float	FloatForKey (entity_t *ent, char *key);
+void 	GetVectorForKey (entity_t *ent, char *key, vec3_t vec);
+
+void	WriteEntitiesToString (void);
+
+================
+File: MERGE.C/MERGE.C
+================
+// merge.c
+
+#include "bsp5.h"
+
+
+#define CONTINUOUS_EPSILON	0.001
+
+/*
+================
+CheckColinear
+
+================
+*/
+void CheckColinear (face_t *f)
+{
+	int			i, j;
+	vec3_t		v1, v2;
+	
+	for (i=0 ; i<f->numpoints ;i++)
+	{
+// skip the point if the vector from the previous point is the same
+// as the vector to the next point
+		j = (i - 1 < 0) ? f->numpoints - 1 : i - 1;
+		VectorSubtract (f->pts[i], f->pts[j], v1);
+		VectorNormalize (v1);
+		
+		j = (i + 1 == f->numpoints) ? 0 : i + 1;
+		VectorSubtract (f->pts[j], f->pts[i], v2);
+		VectorNormalize (v2);
+		
+		if (VectorCompare (v1, v2))
+			Error ("Colinear edge");			
+	}
+	
+}
+
+
+/*
+=============
+TryMerge
+
+If two polygons share a common edge and the edges that meet at the
+common points are both inside the other polygons, merge them
+
+Returns NULL if the faces couldn't be merged, or the new face.
+The originals will NOT be freed.
+=============
+*/
+face_t *TryMerge (face_t *f1, face_t *f2)
+{
+	vec_t		*p1, *p2, *p3, *p4, *back;
+	face_t		*newf;
+	int			i, j, k, l;
+	vec3_t		normal, delta, planenormal;
+	vec_t		dot;
+	plane_t		*plane;
+	qboolean		keep1, keep2;
+	
+	if (f1->numpoints == -1 || f2->numpoints == -1)
+		return NULL;
+	if (f1->planeside != f2->planeside)
+		return NULL;
+	if (f1->texturenum != f2->texturenum)
+		return NULL;
+	if (f1->contents[0] != f2->contents[0])
+		return NULL;
+	if (f1->contents[1] != f2->contents[1])
+		return NULL;
+		
+//
+// find a common edge
+//	
+	p1 = p2 = NULL;	// stop compiler warning
+	j = 0;			// 
+	
+	for (i=0 ; i<f1->numpoints ; i++)
+	{
+		p1 = f1->pts[i];
+		p2 = f1->pts[(i+1)%f1->numpoints];
+		for (j=0 ; j<f2->numpoints ; j++)
+		{
+			p3 = f2->pts[j];
+			p4 = f2->pts[(j+1)%f2->numpoints];
+			for (k=0 ; k<3 ; k++)
+			{
+				if (fabs(p1[k] - p4[k]) > EQUAL_EPSILON)
+					break;
+				if (fabs(p2[k] - p3[k]) > EQUAL_EPSILON)
+					break;
+			}
+			if (k==3)
+				break;
+		}
+		if (j < f2->numpoints)
+			break;
+	}
+	
+	if (i == f1->numpoints)
+		return NULL;			// no matching edges
+
+//
+// check slope of connected lines
+// if the slopes are colinear, the point can be removed
+//
+	plane = &planes[f1->planenum];
+	VectorCopy (plane->normal, planenormal);
+	if (f1->planeside)
+		VectorSubtract (vec3_origin, planenormal, planenormal);
+		
+	back = f1->pts[(i+f1->numpoints-1)%f1->numpoints];
+	VectorSubtract (p1, back, delta);
+	CrossProduct (planenormal, delta, normal);
+	VectorNormalize (normal);
+	
+	back = f2->pts[(j+2)%f2->numpoints];
+	VectorSubtract (back, p1, delta);
+	dot = DotProduct (delta, normal);
+	if (dot > CONTINUOUS_EPSILON)
+		return NULL;			// not a convex polygon
+	keep1 = dot < -CONTINUOUS_EPSILON;
+	
+	back = f1->pts[(i+2)%f1->numpoints];
+	VectorSubtract (back, p2, delta);
+	CrossProduct (planenormal, delta, normal);
+	VectorNormalize (normal);
+
+	back = f2->pts[(j+f2->numpoints-1)%f2->numpoints];
+	VectorSubtract (back, p2, delta);
+	dot = DotProduct (delta, normal);
+	if (dot > CONTINUOUS_EPSILON)
+		return NULL;			// not a convex polygon
+	keep2 = dot < -CONTINUOUS_EPSILON;
+
+//
+// build the new polygon
+//
+	if (f1->numpoints + f2->numpoints > MAXEDGES)
+	{
+//		Error ("TryMerge: too many edges!");
+		return NULL;
+	}
+
+	newf = NewFaceFromFace (f1);
+	
+// copy first polygon
+	for (k=(i+1)%f1->numpoints ; k != i ; k=(k+1)%f1->numpoints)
+	{
+		if (k==(i+1)%f1->numpoints && !keep2)
+			continue;
+		
+		VectorCopy (f1->pts[k], newf->pts[newf->numpoints]);
+		newf->numpoints++;
+	}
+	
+// copy second polygon
+	for (l= (j+1)%f2->numpoints ; l != j ; l=(l+1)%f2->numpoints)
+	{
+		if (l==(j+1)%f2->numpoints && !keep1)
+			continue;
+		VectorCopy (f2->pts[l], newf->pts[newf->numpoints]);
+		newf->numpoints++;
+	}
+
+	return newf;
+}
+
+
+/*
+===============
+MergeFaceToList
+===============
+*/
+qboolean	mergedebug;
+face_t *MergeFaceToList (face_t *face, face_t *list)
+{	
+	face_t	*newf, *f;
+	
+	for (f=list ; f ; f=f->next)
+	{
+//CheckColinear (f);		
+if (mergedebug)
+{
+Draw_ClearWindow ();
+Draw_DrawFace (face);
+Draw_DrawFace (f);
+Draw_SetBlack ();
+}
+		newf = TryMerge (face, f);
+		if (!newf)
+			continue;
+		FreeFace (face);
+		f->numpoints = -1;		// merged out
+		return MergeFaceToList (newf, list);
+	}
+	
+// didn't merge, so add at start
+	face->next = list;
+	return face;
+}
+
+
+/*
+===============
+FreeMergeListScraps
+===============
+*/
+face_t *FreeMergeListScraps (face_t *merged)
+{
+	face_t	*head, *next;
+	
+	head = NULL;
+	for ( ; merged ; merged = next)
+	{
+		next = merged->next;
+		if (merged->numpoints == -1)
+			FreeFace (merged);
+		else
+		{
+			merged->next = head;
+			head = merged;
+		}
+	}
+
+	return head;
+}
+
+
+/*
+===============
+MergePlaneFaces
+===============
+*/
+void MergePlaneFaces (surface_t *plane)
+{
+	face_t	*f1, *next;
+	face_t	*merged;
+	
+	merged = NULL;
+	
+	for (f1 = plane->faces ; f1 ; f1 = next)
+	{
+		next = f1->next;
+		merged = MergeFaceToList (f1, merged);
+	}
+
+// chain all of the non-empty faces to the plane
+	plane->faces = FreeMergeListScraps (merged);
+}
+
+
+/*
+============
+MergeAll
+============
+*/
+void MergeAll (surface_t *surfhead)
+{
+	surface_t       *surf;
+	int                     mergefaces;
+	face_t          *f;
+	
+	printf ("---- MergeAll ----\n");
+
+	mergefaces = 0; 
+	for (surf = surfhead ; surf ; surf=surf->next)
+	{
+		MergePlaneFaces (surf);
+Draw_ClearWindow ();
+		for (f=surf->faces ; f ; f=f->next)
+		{
+Draw_DrawFace (f);
+			mergefaces++;
+		}
+	}
+	
+	printf ("%i mergefaces\n", mergefaces);
+}
+
+================
+File: NODRAW.C/NODRAW.C
+================
+#include "bsp5.h"
+
+void Draw_ClearBounds (void)
+{
+}
+
+void Draw_AddToBounds (vec3_t v)
+{
+}
+
+void Draw_DrawFace (face_t *f)
+{
+}
+
+void Draw_ClearWindow (void)
+{
+}
+
+void Draw_SetRed (void)
+{
+}
+
+void Draw_SetGrey (void)
+{
+}
+
+void Draw_SetBlack (void)
+{
+}
+
+void DrawPoint (vec3_t v)
+{
+}
+
+void DrawLeaf (node_t *l, int color)
+{
+}
+
+void DrawBrush (brush_t *b)
+{
+}
+
+void DrawWinding (winding_t *w)
+{
+}
+
+void DrawTri (vec3_t p1, vec3_t p2, vec3_t p3)
+{
+}
+
+void DrawPortal (portal_t *portal)
+{
+}
+
+================
+File: OUTSIDE.C/OUTSIDE.C
+================
+#include "bsp5.h"
+
+int		outleafs;
+
+/*
+===========
+PointInLeaf
+===========
+*/
+node_t	*PointInLeaf (node_t *node, vec3_t point)
+{
+	vec_t	d;
+	
+	if (node->contents)
+		return node;
+		
+	d = DotProduct (planes[node->planenum].normal, point) - planes[node->planenum]. dist;
+	
+	if (d > 0)
+		return PointInLeaf (node->children[0], point);
+	
+	return PointInLeaf (node->children[1], point);
+}
+
+/*
+===========
+PlaceOccupant
+===========
+*/
+qboolean PlaceOccupant (int num, vec3_t point, node_t *headnode)
+{
+	node_t	*n;
+	
+	n = PointInLeaf (headnode, point);
+	if (n->contents == CONTENTS_SOLID)
+		return false;
+	n->occupied = num;
+	return true;
+}
+
+
+/*
+==============
+MarkLeakTrail
+==============
+*/
+portal_t	*prevleaknode;
+FILE	*leakfile;
+void MarkLeakTrail (portal_t *n2)
+{
+	int		i, j;
+	vec3_t	p1, p2, dir;
+	float	len;
+	portal_t *n1;
+
+	if (hullnum)
+		return;
+
+	n1 = prevleaknode;
+	prevleaknode = n2;
+	
+	if (!n1)
+		return;
+		
+	VectorCopy (n2->winding->points[0], p1);
+	for (i=1 ; i< n2->winding->numpoints ; i++)
+	{
+		for (j=0 ; j<3 ; j++)
+			p1[j] = (p1[j] + n2->winding->points[i][j]) / 2;
+	}
+	
+	VectorCopy (n1->winding->points[0], p2);
+	for (i=1 ; i< n1->winding->numpoints ; i++)
+	{
+		for (j=0 ; j<3 ; j++)
+			p2[j] = (p2[j] + n1->winding->points[i][j]) / 2;
+	}
+		
+	VectorSubtract (p2, p1, dir);
+	len = VectorLength (dir);
+	VectorNormalize (dir);
+	
+	while (len > 2)
+	{
+		fprintf (leakfile,"%f %f %f\n", p1[0], p1[1], p1[2]);
+		for (i=0 ; i<3 ; i++)
+			p1[i] += dir[i]*2;
+		len -= 2;
+	}
+}
+
+/*
+==================
+RecursiveFillOutside
+
+If fill is false, just check, don't fill
+Returns true if an occupied leaf is reached
+==================
+*/
+int		hit_occupied;
+int		backdraw;
+qboolean RecursiveFillOutside (node_t *l, qboolean fill)
+{
+	portal_t	*p;
+	int			s;
+
+	if (l->contents == CONTENTS_SOLID || l->contents == CONTENTS_SKY)
+		return false;
+		
+	if (l->valid == valid)
+		return false;
+	
+	if (l->occupied)
+		return true;
+	
+	l->valid = valid;
+
+// fill it and it's neighbors
+	if (fill)
+		l->contents = CONTENTS_SOLID;
+	outleafs++;
+
+	for (p=l->portals ; p ; )
+	{
+		s = (p->nodes[0] == l);
+
+		if (RecursiveFillOutside (p->nodes[s], fill) )
+		{	// leaked, so stop filling
+			if (backdraw-- > 0)
+			{				
+				MarkLeakTrail (p);
+				DrawLeaf (l, 2);
+			}
+			return true;
+		}
+		p = p->next[!s];
+	}
+	
+	return false;
+}
+
+/*
+==================
+ClearOutFaces
+
+==================
+*/
+void ClearOutFaces (node_t *node)
+{
+	face_t	**fp;
+	
+	if (node->planenum != -1)
+	{
+		ClearOutFaces (node->children[0]);
+		ClearOutFaces (node->children[1]);
+		return;
+	}
+	if (node->contents != CONTENTS_SOLID)
+		return;
+
+	for (fp=node->markfaces ; *fp ; fp++)
+	{
+	// mark all the original faces that are removed
+		(*fp)->numpoints = 0;
+	}
+	node->faces = NULL;
+}
+
+
+//=============================================================================
+
+/*
+===========
+FillOutside
+
+===========
+*/
+qboolean FillOutside (node_t *node)
+{
+	int			s;
+	vec_t		*v;
+	int			i;
+	qboolean	inside;
+	
+	qprintf ("----- FillOutside ----\n");
+
+	if (nofill)
+	{
+		printf ("skipped\n");
+		return false;
+	}
+		
+	inside = false;
+	for (i=1 ; i<num_entities ; i++)
+	{
+		if (!VectorCompare(entities[i].origin, vec3_origin))
+		{
+			if (PlaceOccupant (i, entities[i].origin, node))
+				inside = true;
+		}
+	}
+
+	if (!inside)
+	{
+		printf ("Hullnum %i: No entities in empty space -- no filling performed\n", hullnum);
+		return false;
+	}
+
+	s = !(outside_node.portals->nodes[1] == &outside_node);
+
+// first check to see if an occupied leaf is hit
+	outleafs = 0;
+	valid++;
+
+	prevleaknode = NULL;
+	
+	if (!hullnum)
+	{
+		leakfile = fopen (pointfilename, "w");
+		if (!leakfile)
+			Error ("Couldn't open %s\n", pointfilename);
+	}
+
+	if (RecursiveFillOutside (outside_node.portals->nodes[s], false))
+	{
+		v = entities[hit_occupied].origin;
+		qprintf ("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+		qprintf ("reached occupant at: (%4.0f,%4.0f,%4.0f)\n"
+		, v[0], v[1], v[2]);
+		qprintf ("no filling performed\n");
+		if (!hullnum)
+			fclose (leakfile);
+		qprintf ("leak file written to %s\n", pointfilename);			
+		qprintf ("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+		return false;
+	}
+	if (!hullnum)
+		fclose (leakfile);
+
+// now go back and fill things in
+	valid++;
+	RecursiveFillOutside (outside_node.portals->nodes[s], true);
+
+// remove faces from filled in leafs	
+	ClearOutFaces (node);
+	
+	qprintf ("%4i outleafs\n", outleafs);
+	return true;
+}
+
+================
+File: PORTALS.C/PORTALS.C
+================
+#include "bsp5.h"
+
+
+node_t	outside_node;		// portals outside the world face this
+
+//=============================================================================
+
+/*
+=============
+AddPortalToNodes
+=============
+*/
+void AddPortalToNodes (portal_t *p, node_t *front, node_t *back)
+{
+	if (p->nodes[0] || p->nodes[1])
+		Error ("AddPortalToNode: allready included");
+
+	p->nodes[0] = front;
+	p->next[0] = front->portals;
+	front->portals = p;
+	
+	p->nodes[1] = back;
+	p->next[1] = back->portals;
+	back->portals = p;
+}
+
+
+/*
+=============
+RemovePortalFromNode
+=============
+*/
+void RemovePortalFromNode (portal_t *portal, node_t *l)
+{
+	portal_t	**pp, *t;
+	
+// remove reference to the current portal
+	pp = &l->portals;
+	while (1)
+	{
+		t = *pp;
+		if (!t)
+			Error ("RemovePortalFromNode: portal not in leaf");	
+
+		if ( t == portal )
+			break;
+
+		if (t->nodes[0] == l)
+			pp = &t->next[0];
+		else if (t->nodes[1] == l)
+			pp = &t->next[1];
+		else
+			Error ("RemovePortalFromNode: portal not bounding leaf");
+	}
+	
+	if (portal->nodes[0] == l)
+	{
+		*pp = portal->next[0];
+		portal->nodes[0] = NULL;
+	}
+	else if (portal->nodes[1] == l)
+	{
+		*pp = portal->next[1];	
+		portal->nodes[1] = NULL;
+	}
+}
+
+//============================================================================
+
+void PrintPortal (portal_t *p)
+{
+	int			i;
+	winding_t	*w;
+	
+	w = p->winding;
+	for (i=0 ; i<w->numpoints ; i++)
+		printf ("(%5.0f,%5.0f,%5.0f)\n",w->points[i][0]
+		, w->points[i][1], w->points[i][2]);
+}
+
+/*
+================
+MakeHeadnodePortals
+
+The created portals will face the global outside_node
+================
+*/
+void MakeHeadnodePortals (node_t *node)
+{
+	vec3_t		bounds[2];
+	int			i, j, n;
+	portal_t	*p, *portals[6];
+	plane_t		bplanes[6], *pl;
+	int			side;
+	
+	Draw_ClearWindow ();
+	
+// pad with some space so there will never be null volume leafs
+	for (i=0 ; i<3 ; i++)
+	{
+		bounds[0][i] = brushset->mins[i] - SIDESPACE;
+		bounds[1][i] = brushset->maxs[i] + SIDESPACE;
+	}
+	
+	outside_node.contents = CONTENTS_SOLID;
+	outside_node.portals = NULL;
+
+	for (i=0 ; i<3 ; i++)
+		for (j=0 ; j<2 ; j++)
+		{
+			n = j*3 + i;
+
+			p = AllocPortal ();
+			portals[n] = p;
+			
+			pl = &bplanes[n];
+			memset (pl, 0, sizeof(*pl));
+			if (j)
+			{
+				pl->normal[i] = -1;
+				pl->dist = -bounds[j][i];
+			}
+			else
+			{
+				pl->normal[i] = 1;
+				pl->dist = bounds[j][i];
+			}
+			p->planenum = FindPlane (pl, &side);
+	
+			p->winding = BaseWindingForPlane (pl);
+			if (side)
+				AddPortalToNodes (p, &outside_node, node);
+			else
+				AddPortalToNodes (p, node, &outside_node);
+		}
+		
+// clip the basewindings by all the other planes
+	for (i=0 ; i<6 ; i++)
+	{
+		for (j=0 ; j<6 ; j++)
+		{
+			if (j == i)
+				continue;
+			portals[i]->winding = ClipWinding (portals[i]->winding, &bplanes[j], true);
+		}
+	}
+}
+
+//============================================================================
+
+void CheckWindingInNode (winding_t *w, node_t *node)
+{
+	int		i, j;
+	
+	for (i=0 ; i<w->numpoints ; i++)
+	{
+		for (j=0 ; j<3 ; j++)
+			if (w->points[i][j] < node->mins[j] - 1
+			|| w->points[i][j] > node->maxs[j] + 1)
+			{
+				printf ("WARNING: CheckWindingInNode: outside\n");
+				return;
+			}
+	}
+}
+
+void CheckWindingArea (winding_t *w)
+{
+	int		i;
+	float	total, add;
+	vec3_t	v1, v2, cross;
+	
+	total = 0;
+	for (i=1 ; i<w->numpoints ; i++)
+	{
+		VectorSubtract (w->points[i], w->points[0], v1);
+		VectorSubtract (w->points[i+1], w->points[0], v2);
+		CrossProduct (v1, v2, cross);
+		add = VectorLength (cross);
+		total += add*0.5;
+	}
+	if (total < 16)
+		printf ("WARNING: winding area %f\n", total);
+}
+
+
+void PlaneFromWinding (winding_t *w, plane_t *plane)
+{
+	vec3_t		v1, v2;
+
+// calc plane
+	VectorSubtract (w->points[2], w->points[1], v1);
+	VectorSubtract (w->points[0], w->points[1], v2);
+	CrossProduct (v2, v1, plane->normal);
+	VectorNormalize (plane->normal);
+	plane->dist = DotProduct (w->points[0], plane->normal);
+}
+
+void CheckLeafPortalConsistancy (node_t *node)
+{
+	int			side, side2;
+	portal_t	*p, *p2;
+	plane_t		plane, plane2;
+	int			i;
+	winding_t	*w;
+	float		dist;
+
+	side = side2 = 0;		// quiet compiler warning
+
+	for (p = node->portals ; p ; p = p->next[side])	
+	{
+		if (p->nodes[0] == node)
+			side = 0;
+		else if (p->nodes[1] == node)
+			side = 1;
+		else
+			Error ("CutNodePortals_r: mislinked portal");
+		CheckWindingInNode (p->winding, node);
+		CheckWindingArea (p->winding);
+
+	// check that the side orders are correct
+		plane = planes[p->planenum];
+ 		PlaneFromWinding (p->winding, &plane2);
+		
+		for (p2 = node->portals ; p2 ; p2 = p2->next[side2])	
+		{
+			if (p2->nodes[0] == node)
+				side2 = 0;
+			else if (p2->nodes[1] == node)
+				side2 = 1;
+			else
+				Error ("CutNodePortals_r: mislinked portal");
+			w = p2->winding;
+			for (i=0 ; i<w->numpoints ; i++)
+			{
+				dist = DotProduct (w->points[i], plane.normal) - plane.dist;
+				if ( (side == 0 && dist < -1) || (side == 1 && dist > 1) )
+				{
+					printf ("WARNING: portal siding direction is wrong\n");
+					return;
+				}
+			}
+			
+		}
+	}
+}
+
+
+/*
+================
+CutNodePortals_r
+
+================
+*/
+void CutNodePortals_r (node_t *node)
+{
+	plane_t 	*plane, clipplane;
+	node_t		*f, *b, *other_node;
+	portal_t	*p, *new_portal, *next_portal;
+	winding_t	*w, *frontwinding, *backwinding;
+	int			side;
+
+//	CheckLeafPortalConsistancy (node);
+
+//
+// seperate the portals on node into it's children	
+//
+	if (node->contents)
+	{
+		return;			// at a leaf, no more dividing
+	}
+
+	plane = &planes[node->planenum];
+
+	f = node->children[0];
+	b = node->children[1];
+
+//
+// create the new portal by taking the full plane winding for the cutting plane
+// and clipping it by all of the planes from the other portals
+//
+	new_portal = AllocPortal ();
+	new_portal->planenum = node->planenum;
+	
+	w = BaseWindingForPlane (&planes[node->planenum]);
+	side = 0;	// shut up compiler warning
+	for (p = node->portals ; p ; p = p->next[side])	
+	{
+		clipplane = planes[p->planenum];
+		if (p->nodes[0] == node)
+			side = 0;
+		else if (p->nodes[1] == node)
+		{
+			clipplane.dist = -clipplane.dist;
+			VectorSubtract (vec3_origin, clipplane.normal, clipplane.normal);
+			side = 1;
+		}
+		else
+			Error ("CutNodePortals_r: mislinked portal");
+
+		w = ClipWinding (w, &clipplane, true);
+		if (!w)
+		{
+			printf ("WARNING: CutNodePortals_r:new portal was clipped away\n");
+			break;
+		}
+	}
+	
+	if (w)
+	{
+	// if the plane was not clipped on all sides, there was an error
+		new_portal->winding = w;	
+		AddPortalToNodes (new_portal, f, b);
+	}
+
+//
+// partition the portals
+//
+	for (p = node->portals ; p ; p = next_portal)	
+	{
+		if (p->nodes[0] == node)
+			side = 0;
+		else if (p->nodes[1] == node)
+			side = 1;
+		else
+			Error ("CutNodePortals_r: mislinked portal");
+		next_portal = p->next[side];
+
+		other_node = p->nodes[!side];
+		RemovePortalFromNode (p, p->nodes[0]);
+		RemovePortalFromNode (p, p->nodes[1]);
+
+//
+// cut the portal into two portals, one on each side of the cut plane
+//
+		DivideWinding (p->winding, plane, &frontwinding, &backwinding);
+		
+		if (!frontwinding)
+		{
+			if (side == 0)
+				AddPortalToNodes (p, b, other_node);
+			else
+				AddPortalToNodes (p, other_node, b);
+			continue;
+		}
+		if (!backwinding)
+		{
+			if (side == 0)
+				AddPortalToNodes (p, f, other_node);
+			else
+				AddPortalToNodes (p, other_node, f);
+			continue;
+		}
+		
+	// the winding is split
+		new_portal = AllocPortal ();
+		*new_portal = *p;
+		new_portal->winding = backwinding;
+		FreeWinding (p->winding);
+		p->winding = frontwinding;
+
+		if (side == 0)
+		{
+			AddPortalToNodes (p, f, other_node);
+			AddPortalToNodes (new_portal, b, other_node);
+		}
+		else
+		{
+			AddPortalToNodes (p, other_node, f);
+			AddPortalToNodes (new_portal, other_node, b);
+		}
+	}
+	
+DrawLeaf (f,1);
+DrawLeaf (b,2);	
+
+	CutNodePortals_r (f);	
+	CutNodePortals_r (b);	
+
+}
+
+
+/*
+==================
+PortalizeWorld
+
+Builds the exact polyhedrons for the nodes and leafs
+==================
+*/
+void PortalizeWorld (node_t *headnode)
+{
+	qprintf ("----- portalize ----\n");
+
+	MakeHeadnodePortals (headnode);
+	CutNodePortals_r (headnode);	
+}
+
+
+/*
+==================
+FreeAllPortals
+
+==================
+*/
+void FreeAllPortals (node_t *node)
+{
+	portal_t	*p, *nextp;
+	
+	if (!node->contents)
+	{
+		FreeAllPortals (node->children[0]);
+		FreeAllPortals (node->children[1]);
+	}
+	
+	for (p=node->portals ; p ; p=nextp)
+	{
+		if (p->nodes[0] == node)
+			nextp = p->next[0];
+		else
+			nextp = p->next[1];
+		RemovePortalFromNode (p, p->nodes[0]);
+		RemovePortalFromNode (p, p->nodes[1]);
+		FreeWinding (p->winding);
+		FreePortal (p);
+	}
+}
+
+/*
+==============================================================================
+
+PORTAL FILE GENERATION
+
+==============================================================================
+*/
+
+#define	PORTALFILE	"PRT1"
+
+FILE	*pf;
+int		num_visleafs;				// leafs the player can be in
+int		num_visportals;
+
+void WriteFloat (FILE *f, vec_t v)
+{
+	if ( fabs(v - Q_rint(v)) < 0.001 )
+		fprintf (f,"%i ",(int)Q_rint(v));
+	else
+		fprintf (f,"%f ",v);
+}
+
+void WritePortalFile_r (node_t *node)
+{
+	int		i;	
+	portal_t	*p;
+	winding_t	*w;
+	plane_t		*pl, plane2;
+
+	if (!node->contents)
+	{
+		WritePortalFile_r (node->children[0]);
+		WritePortalFile_r (node->children[1]);
+		return;
+	}
+	
+	if (node->contents == CONTENTS_SOLID)
+		return;
+
+	for (p = node->portals ; p ; )
+	{
+		w = p->winding;
+		if (w && p->nodes[0] == node
+		&& p->nodes[0]->contents == p->nodes[1]->contents)
+		{
+		// write out to the file
+		
+		// sometimes planes get turned around when they are very near
+		// the changeover point between different axis.  interpret the
+		// plane the same way vis will, and flip the side orders if needed
+			pl = &planes[p->planenum];
+			PlaneFromWinding (w, &plane2);
+			if ( DotProduct (pl->normal, plane2.normal) < 0.99 )
+			{	// backwards...
+				fprintf (pf,"%i %i %i ",w->numpoints, p->nodes[1]->visleafnum, p->nodes[0]->visleafnum);
+			}
+			else
+				fprintf (pf,"%i %i %i ",w->numpoints, p->nodes[0]->visleafnum, p->nodes[1]->visleafnum);
+			for (i=0 ; i<w->numpoints ; i++)
+			{
+				fprintf (pf,"(");
+				WriteFloat (pf, w->points[i][0]);
+				WriteFloat (pf, w->points[i][1]);
+				WriteFloat (pf, w->points[i][2]);
+				fprintf (pf,") ");
+			}
+			fprintf (pf,"\n");
+		}
+		
+		if (p->nodes[0] == node)
+			p = p->next[0];
+		else
+			p = p->next[1];
+	}
+
+}
+	
+/*
+================
+NumberLeafs_r
+================
+*/
+void NumberLeafs_r (node_t *node)
+{
+	portal_t	*p;
+
+	if (!node->contents)
+	{	// decision node
+		node->visleafnum = -99;
+		NumberLeafs_r (node->children[0]);
+		NumberLeafs_r (node->children[1]);
+		return;
+	}
+	
+	Draw_ClearWindow ();
+	DrawLeaf (node, 1);
+	
+	if (node->contents == CONTENTS_SOLID)
+	{	// solid block, viewpoint never inside
+		node->visleafnum = -1;
+		return;
+	}
+
+	node->visleafnum = num_visleafs++;
+	
+	for (p = node->portals ; p ; )
+	{
+		if (p->nodes[0] == node)		// only write out from first leaf
+		{
+			if (p->nodes[0]->contents == p->nodes[1]->contents)
+				num_visportals++;
+			p = p->next[0];
+		}
+		else
+			p = p->next[1];		
+	}
+
+}
+
+
+/*
+================
+WritePortalfile
+================
+*/
+void WritePortalfile (node_t *headnode)
+{
+// set the visleafnum field in every leaf and count the total number of portals
+	num_visleafs = 0;
+	num_visportals = 0;
+	NumberLeafs_r (headnode);
+	
+// write the file
+	printf ("writing %s\n", portfilename);
+	pf = fopen (portfilename, "w");
+	if (!pf)
+		Error ("Error opening %s", portfilename);
+		
+	fprintf (pf, "%s\n", PORTALFILE);
+	fprintf (pf, "%i\n", num_visleafs);
+	fprintf (pf, "%i\n", num_visportals);
+	
+	WritePortalFile_r (headnode);
+	
+	fclose (pf);
+}
+
+================
+File: QBSP.C/QBSP.C
+================
+// bsp5.c
+
+#include "bsp5.h"
+
+//
+// command line flags
+//
+qboolean	drawflag;
+qboolean nofill;
+qboolean notjunc;
+qboolean noclip;
+qboolean onlyents;
+qboolean	verbose = true;
+qboolean	allverbose;
+qboolean	usehulls;
+
+int		subdivide_size = 240;
+
+brushset_t	*brushset;
+
+int		valid;
+
+char	bspfilename[1024];
+char	pointfilename[1024];
+char	portfilename[1024];
+char	hullfilename[1024];
+
+char	*argv0;					// changed after fork();
+
+qboolean	worldmodel;
+
+int		hullnum;
+
+//===========================================================================
+
+void qprintf (char *fmt, ...)
+{
+	va_list argptr;
+
+	if (!verbose)
+		return;
+
+	va_start (argptr, fmt);
+	vprintf (fmt,argptr);
+	va_end (argptr);
+}
+
+/*
+=================
+BaseWindingForPlane
+=================
+*/
+winding_t *BaseWindingForPlane (plane_t *p)
+{
+	int		i, x;
+	vec_t	max, v;
+	vec3_t	org, vright, vup;
+	winding_t	*w;
+	
+// find the major axis
+
+	max = -BOGUS_RANGE;
+	x = -1;
+	for (i=0 ; i<3; i++)
+	{
+		v = fabs(p->normal[i]);
+		if (v > max)
+		{
+			x = i;
+			max = v;
+		}
+	}
+	if (x==-1)
+		Error ("BaseWindingForPlane: no axis found");
+		
+	VectorCopy (vec3_origin, vup);	
+	switch (x)
+	{
+	case 0:
+	case 1:
+		vup[2] = 1;
+		break;		
+	case 2:
+		vup[0] = 1;
+		break;		
+	}
+
+	v = DotProduct (vup, p->normal);
+	VectorMA (vup, -v, p->normal, vup);
+	VectorNormalize (vup);
+		
+	VectorScale (p->normal, p->dist, org);
+	
+	CrossProduct (vup, p->normal, vright);
+	
+	VectorScale (vup, 8192, vup);
+	VectorScale (vright, 8192, vright);
+
+// project a really big	axis aligned box onto the plane
+	w = NewWinding (4);
+	
+	VectorSubtract (org, vright, w->points[0]);
+	VectorAdd (w->points[0], vup, w->points[0]);
+	
+	VectorAdd (org, vright, w->points[1]);
+	VectorAdd (w->points[1], vup, w->points[1]);
+	
+	VectorAdd (org, vright, w->points[2]);
+	VectorSubtract (w->points[2], vup, w->points[2]);
+	
+	VectorSubtract (org, vright, w->points[3]);
+	VectorSubtract (w->points[3], vup, w->points[3]);
+	
+	w->numpoints = 4;
+	
+	return w;	
+}
+
+
+
+/*
+==================
+CopyWinding
+==================
+*/
+winding_t	*CopyWinding (winding_t *w)
+{
+	int			size;
+	winding_t	*c;
+	
+	size = (int)((winding_t *)0)->points[w->numpoints];
+	c = malloc (size);
+	memcpy (c, w, size);
+	return c;
+}
+
+
+
+/*
+==================
+CheckWinding
+
+Check for possible errors
+==================
+*/
+void CheckWinding (winding_t *w)
+{
+}
+
+
+/*
+==================
+ClipWinding
+
+Clips the winding to the plane, returning the new winding on the positive side
+Frees the input winding.
+If keepon is true, an exactly on-plane winding will be saved, otherwise
+it will be clipped away.
+==================
+*/
+winding_t *ClipWinding (winding_t *in, plane_t *split, qboolean keepon)
+{
+	vec_t	dists[MAX_POINTS_ON_WINDING];
+	int		sides[MAX_POINTS_ON_WINDING];
+	int		counts[3];
+	vec_t	dot;
+	int		i, j;
+	vec_t	*p1, *p2;
+	vec3_t	mid;
+	winding_t	*neww;
+	int		maxpts;
+	
+	counts[0] = counts[1] = counts[2] = 0;
+
+// determine sides for each point
+	for (i=0 ; i<in->numpoints ; i++)
+	{
+		dot = DotProduct (in->points[i], split->normal);
+		dot -= split->dist;
+		dists[i] = dot;
+		if (dot > ON_EPSILON)
+			sides[i] = SIDE_FRONT;
+		else if (dot < -ON_EPSILON)
+			sides[i] = SIDE_BACK;
+		else
+		{
+			sides[i] = SIDE_ON;
+		}
+		counts[sides[i]]++;
+	}
+	sides[i] = sides[0];
+	dists[i] = dists[0];
+	
+	if (keepon && !counts[0] && !counts[1])
+		return in;
+		
+	if (!counts[0])
+	{
+		FreeWinding (in);
+		return NULL;
+	}
+	if (!counts[1])
+		return in;
+	
+	maxpts = in->numpoints+4;	// can't use counts[0]+2 because
+								// of fp grouping errors
+	neww = NewWinding (maxpts);
+		
+	for (i=0 ; i<in->numpoints ; i++)
+	{
+		p1 = in->points[i];
+		
+		if (sides[i] == SIDE_ON)
+		{
+			VectorCopy (p1, neww->points[neww->numpoints]);
+			neww->numpoints++;
+			continue;
+		}
+	
+		if (sides[i] == SIDE_FRONT)
+		{
+			VectorCopy (p1, neww->points[neww->numpoints]);
+			neww->numpoints++;
+		}
+		
+		if (sides[i+1] == SIDE_ON || sides[i+1] == sides[i])
+			continue;
+			
+	// generate a split point
+		p2 = in->points[(i+1)%in->numpoints];
+		
+		dot = dists[i] / (dists[i]-dists[i+1]);
+		for (j=0 ; j<3 ; j++)
+		{	// avoid round off error when possible
+			if (split->normal[j] == 1)
+				mid[j] = split->dist;
+			else if (split->normal[j] == -1)
+				mid[j] = -split->dist;
+			else
+				mid[j] = p1[j] + dot*(p2[j]-p1[j]);
+		}
+			
+		VectorCopy (mid, neww->points[neww->numpoints]);
+		neww->numpoints++;
+	}
+	
+	if (neww->numpoints > maxpts)
+		Error ("ClipWinding: points exceeded estimate");
+		
+// free the original winding
+	FreeWinding (in);
+	
+	return neww;
+}
+
+
+/*
+==================
+DivideWinding
+
+Divides a winding by a plane, producing one or two windings.  The
+original winding is not damaged or freed.  If only on one side, the
+returned winding will be the input winding.  If on both sides, two
+new windings will be created.
+==================
+*/
+void	DivideWinding (winding_t *in, plane_t *split, winding_t **front, winding_t **back)
+{
+	vec_t	dists[MAX_POINTS_ON_WINDING];
+	int		sides[MAX_POINTS_ON_WINDING];
+	int		counts[3];
+	vec_t	dot;
+	int		i, j;
+	vec_t	*p1, *p2;
+	vec3_t	mid;
+	winding_t	*f, *b;
+	int		maxpts;
+	
+	counts[0] = counts[1] = counts[2] = 0;
+
+// determine sides for each point
+	for (i=0 ; i<in->numpoints ; i++)
+	{
+		dot = DotProduct (in->points[i], split->normal);
+		dot -= split->dist;
+		dists[i] = dot;
+		if (dot > ON_EPSILON)
+			sides[i] = SIDE_FRONT;
+		else if (dot < -ON_EPSILON)
+			sides[i] = SIDE_BACK;
+		else
+		{
+			sides[i] = SIDE_ON;
+		}
+		counts[sides[i]]++;
+	}
+	sides[i] = sides[0];
+	dists[i] = dists[0];
+	
+	*front = *back = NULL;
+
+	if (!counts[0])
+	{
+		*back = in;
+		return;
+	}
+	if (!counts[1])
+	{
+		*front = in;
+		return;
+	}
+
+	maxpts = in->numpoints+4;	// can't use counts[0]+2 because
+								// of fp grouping errors
+
+	*front = f = NewWinding (maxpts);
+	*back = b = NewWinding (maxpts);
+		
+	for (i=0 ; i<in->numpoints ; i++)
+	{
+		p1 = in->points[i];
+		
+		if (sides[i] == SIDE_ON)
+		{
+			VectorCopy (p1, f->points[f->numpoints]);
+			f->numpoints++;
+			VectorCopy (p1, b->points[b->numpoints]);
+			b->numpoints++;
+			continue;
+		}
+	
+		if (sides[i] == SIDE_FRONT)
+		{
+			VectorCopy (p1, f->points[f->numpoints]);
+			f->numpoints++;
+		}
+		if (sides[i] == SIDE_BACK)
+		{
+			VectorCopy (p1, b->points[b->numpoints]);
+			b->numpoints++;
+		}
+
+		if (sides[i+1] == SIDE_ON || sides[i+1] == sides[i])
+			continue;
+			
+	// generate a split point
+		p2 = in->points[(i+1)%in->numpoints];
+		
+		dot = dists[i] / (dists[i]-dists[i+1]);
+		for (j=0 ; j<3 ; j++)
+		{	// avoid round off error when possible
+			if (split->normal[j] == 1)
+				mid[j] = split->dist;
+			else if (split->normal[j] == -1)
+				mid[j] = -split->dist;
+			else
+				mid[j] = p1[j] + dot*(p2[j]-p1[j]);
+		}
+			
+		VectorCopy (mid, f->points[f->numpoints]);
+		f->numpoints++;
+		VectorCopy (mid, b->points[b->numpoints]);
+		b->numpoints++;
+	}
+	
+	if (f->numpoints > maxpts || b->numpoints > maxpts)
+		Error ("ClipWinding: points exceeded estimate");
+}
+
+
+//===========================================================================
+
+int			c_activefaces, c_peakfaces;
+int			c_activesurfaces, c_peaksurfaces;
+int			c_activewindings, c_peakwindings;
+int			c_activeportals, c_peakportals;
+
+void PrintMemory (void)
+{
+	printf ("faces   : %6i (%6i)\n", c_activefaces, c_peakfaces);
+	printf ("surfaces: %6i (%6i)\n", c_activesurfaces, c_peaksurfaces);
+	printf ("windings: %6i (%6i)\n", c_activewindings, c_peakwindings);
+	printf ("portals : %6i (%6i)\n", c_activeportals, c_peakportals);
+}
+
+/*
+==================
+NewWinding
+==================
+*/
+winding_t *NewWinding (int points)
+{
+	winding_t	*w;
+	int			size;
+	
+	if (points > MAX_POINTS_ON_WINDING)
+		Error ("NewWinding: %i points", points);
+	
+	c_activewindings++;
+	if (c_activewindings > c_peakwindings)
+		c_peakwindings = c_activewindings;
+
+	size = (int)((winding_t *)0)->points[points];
+	w = malloc (size);
+	memset (w, 0, size);
+	
+	return w;
+}
+
+
+void FreeWinding (winding_t *w)
+{
+	c_activewindings--;
+	free (w);
+}
+
+
+
+/*
+===========
+AllocFace
+===========
+*/
+face_t *AllocFace (void)
+{
+	face_t	*f;
+	
+	c_activefaces++;
+	if (c_activefaces > c_peakfaces)
+		c_peakfaces = c_activefaces;
+		
+	f = malloc (sizeof(face_t));
+	memset (f, 0, sizeof(face_t));
+	f->planenum = -1;
+
+	return f;
+}
+
+
+void FreeFace (face_t *f)
+{
+	c_activefaces--;
+//	memset (f,0xff,sizeof(face_t));
+	free (f);
+}
+
+
+/*
+===========
+AllocSurface
+===========
+*/
+surface_t *AllocSurface (void)
+{
+	surface_t	*s;
+	
+	s = malloc (sizeof(surface_t));
+	memset (s, 0, sizeof(surface_t));
+	
+	c_activesurfaces++;
+	if (c_activesurfaces > c_peaksurfaces)
+		c_peaksurfaces = c_activesurfaces;
+		
+	return s;
+}
+
+void FreeSurface (surface_t *s)
+{
+	c_activesurfaces--;
+	free (s);
+}
+
+/*
+===========
+AllocPortal
+===========
+*/
+portal_t *AllocPortal (void)
+{
+	portal_t	*p;
+	
+	c_activeportals++;
+	if (c_activeportals > c_peakportals)
+		c_peakportals = c_activeportals;
+	
+	p = malloc (sizeof(portal_t));
+	memset (p, 0, sizeof(portal_t));
+	
+	return p;
+}
+
+void FreePortal (portal_t *p)
+{
+	c_activeportals--;
+	free (p);
+}
+
+
+/*
+===========
+AllocNode
+===========
+*/
+node_t *AllocNode (void)
+{
+	node_t	*n;
+	
+	n = malloc (sizeof(node_t));
+	memset (n, 0, sizeof(node_t));
+	
+	return n;
+}
+
+/*
+===========
+AllocBrush
+===========
+*/
+brush_t *AllocBrush (void)
+{
+	brush_t	*b;
+	
+	b = malloc (sizeof(brush_t));
+	memset (b, 0, sizeof(brush_t));
+	
+	return b;
+}
+
+//===========================================================================
+
+/*
+===============
+ProcessEntity
+===============
+*/
+void ProcessEntity (int entnum)
+{
+	entity_t *ent;
+	char	mod[80];
+	surface_t	*surfs;
+	node_t		*nodes;
+	brushset_t	*bs;
+	
+
+	ent = &entities[entnum];
+	if (!ent->brushes)
+		return;		// non-bmodel entity
+
+	if (entnum > 0)
+	{
+		worldmodel = false;
+		if (entnum == 1)
+			qprintf ("--- Internal Entities ---\n");
+		sprintf (mod, "*%i", nummodels);
+		if (verbose)
+			PrintEntity (ent);
+
+		if (hullnum == 0)
+			printf ("MODEL: %s\n", mod);
+		SetKeyValue (ent, "model", mod);
+	}
+	else
+		worldmodel = true;
+	
+
+//
+// take the brush_ts and clip off all overlapping and contained faces,
+// leaving a perfect skin of the model with no hidden faces
+//
+	bs = Brush_LoadEntity (ent, hullnum);
+	
+	if (!bs->brushes)
+	{
+		PrintEntity (ent);
+		Error ("Entity with no valid brushes");
+	}
+	
+	brushset = bs;
+	surfs = CSGFaces (bs);
+
+	if (hullnum != 0)
+	{
+		nodes = SolidBSP (surfs, true);
+		if (entnum == 0 && !nofill)	// assume non-world bmodels are simple
+		{
+			PortalizeWorld (nodes);
+			if (FillOutside (nodes))
+			{
+				surfs = GatherNodeFaces (nodes);
+				nodes = SolidBSP (surfs, false);	// make a really good tree
+			}
+			FreeAllPortals (nodes);
+		}
+		WriteNodePlanes (nodes);
+		WriteClipNodes (nodes);
+		BumpModel (hullnum);
+	}
+	else
+	{
+	//
+	// SolidBSP generates a node tree
+	//
+	// if not the world, make a good tree first
+	// the world is just going to make a bad tree
+	// because the outside filling will force a regeneration later
+		nodes = SolidBSP (surfs, entnum == 0);	
+		
+	//
+	// build all the portals in the bsp tree
+	// some portals are solid polygons, and some are paths to other leafs
+	//
+		if (entnum == 0 && !nofill)	// assume non-world bmodels are simple
+		{
+			PortalizeWorld (nodes);
+		
+			if (FillOutside (nodes))
+			{
+				FreeAllPortals (nodes);
+
+			// get the remaining faces together into surfaces again
+				surfs = GatherNodeFaces (nodes);
+	
+			// merge polygons
+				MergeAll (surfs);
+	
+			// make a really good tree
+				nodes = SolidBSP (surfs, false);
+	
+			// make the real portals for vis tracing
+				PortalizeWorld (nodes);
+	
+			// save portal file for vis tracing
+				WritePortalfile (nodes);
+				
+			// fix tjunctions
+				tjunc (nodes);
+			}
+			FreeAllPortals (nodes);
+		}
+
+		WriteNodePlanes (nodes);
+		MakeFaceEdges (nodes);
+		WriteDrawNodes (nodes);
+	}
+}
+
+/*
+=================
+UpdateEntLump
+
+=================
+*/
+void UpdateEntLump (void)
+{
+	int		m, entnum;
+	char	mod[80];
+		
+	m = 1;
+	for (entnum = 1 ; entnum < num_entities ; entnum++)
+	{
+		if (!entities[entnum].brushes)
+			continue;
+		sprintf (mod, "*%i", m);
+		SetKeyValue (&entities[entnum], "model", mod);
+		m++;
+	}
+
+	printf ("Updating entities lump...\n");
+	LoadBSPFile (bspfilename);
+	WriteEntitiesToString();
+	WriteBSPFile (bspfilename);	
+}
+
+/*
+=================
+WriteClipHull
+
+Write the clipping hull out to a text file so the parent process can get it
+=================
+*/
+void WriteClipHull (void)
+{
+	FILE	*f;
+	int		i;
+	dplane_t	*p;
+	dclipnode_t	*d;
+
+	hullfilename[strlen(hullfilename)-1] = '0' + hullnum;
+
+	qprintf ("---- WriteClipHull ----\n");
+	qprintf ("Writing %s\n", hullfilename);
+
+	f = fopen (hullfilename, "w");
+	if (!f)
+		Error ("Couldn't open %s", hullfilename);
+
+	fprintf (f, "%i\n", nummodels);
+
+	for (i=0 ; i<nummodels ; i++)
+		fprintf (f, "%i\n", dmodels[i].headnode[hullnum]);
+		
+	fprintf (f, "\n%i\n", numclipnodes);
+
+	for (i=0 ; i<numclipnodes ; i++)
+	{
+		d = &dclipnodes[i];
+		p = &dplanes[d->planenum];
+		// the node number is only written out for human readability
+		fprintf (f, "%5i : %f %f %f %f : %5i %5i\n", i, p->normal[0], p->normal[1], p->normal[2], p->dist, d->children[0], d->children[1]);
+	}
+	
+	fclose (f);
+}
+
+/*
+=================
+ReadClipHull
+
+Read the files written out by the child processes
+=================
+*/
+void ReadClipHull (int hullnum)
+{
+	FILE		*f;
+	int			i, j, n;
+	int			firstclipnode;
+	dplane_t	p;
+	dclipnode_t	*d;
+	int			c1, c2;
+	float		f1, f2, f3, f4;
+	int			junk;
+	vec3_t		norm;
+
+	hullfilename[strlen(hullfilename)-1] = '0' + hullnum;
+
+	f = fopen (hullfilename, "r");
+	if (!f)
+		Error ("Couldn't open %s", hullfilename);
+
+	if (fscanf (f,"%i\n", &n) != 1)
+		Error ("Error parsing %s", hullfilename);
+
+	if (n != nummodels)
+		Error ("ReadClipHull: hull had %i models, base had %i", n, nummodels);
+
+	for (i=0 ; i<n ; i++)
+	{
+		fscanf (f, "%i\n", &j);
+		dmodels[i].headnode[hullnum] = numclipnodes + j;
+	}
+	
+	
+	fscanf (f,"\n%i\n", &n);
+	firstclipnode = numclipnodes;
+	
+	for (i=0 ; i<n ; i++)
+	{
+		if (numclipnodes == MAX_MAP_CLIPNODES)
+			Error ("ReadClipHull: MAX_MAP_CLIPNODES");
+		d = &dclipnodes[numclipnodes];
+		numclipnodes++;
+		if (fscanf (f,"%i : %f %f %f %f : %i %i\n", &junk, &f1, &f2, &f3, &f4, &c1, &c2) != 7)
+			Error ("Error parsing %s", hullfilename);
+		
+
+		p.normal[0] = f1;
+		p.normal[1] = f2;
+		p.normal[2] = f3;
+		p.dist = f4;
+
+		norm[0] = f1; norm[1] = f2; norm[2] = f3; 	// vec_t precision
+		p.type = PlaneTypeForNormal (norm);
+		
+		d->children[0] = c1 >= 0 ? c1 + firstclipnode : c1;
+		d->children[1] = c2 >= 0 ? c2 + firstclipnode : c2;
+		d->planenum = FindFinalPlane (&p);
+	}
+	
+}
+
+/*
+=================
+CreateSingleHull
+
+=================
+*/
+void CreateSingleHull (void)
+{
+	int			entnum;
+
+// for each entity in the map file that has geometry
+	for (entnum = 0 ; entnum < num_entities ; entnum++)
+	{
+		ProcessEntity (entnum);
+		if (!allverbose)
+			verbose = false;	// don't print rest of entities
+	}
+
+	if (hullnum)
+		WriteClipHull ();
+}
+
+/*
+=================
+CreateHulls
+
+=================
+*/
+void CreateHulls (void)
+{
+// commanded to create a single hull only
+	if (hullnum)
+	{
+		CreateSingleHull ();
+		exit (0);
+	}
+	
+// commanded to use the allready existing hulls 1 and 2
+	if (usehulls)
+	{
+		CreateSingleHull ();
+		return;
+	}
+	
+// commanded to ignore the hulls altogether
+	if (noclip)
+	{
+		CreateSingleHull ();
+		return;
+	}
+
+
+// create all the hulls
+
+#ifdef __alpha
+	printf ("forking hull processes...\n");
+// fork a process for each clipping hull
+	fflush (stdout);
+	if (!fork ())
+	{
+		hullnum = 1;
+		verbose = false;
+		drawflag = false;
+		sprintf (argv0, "HUL%i", hullnum);
+	}
+	else if (!fork ())
+	{
+		hullnum = 2;
+		verbose = false;
+		drawflag = false;
+		sprintf (argv0, "HUL%i", hullnum);
+	}
+	CreateSingleHull ();
+
+	if (hullnum)
+		exit (0);
+	
+	wait (NULL);		// wait for clip hull process to finish
+	wait (NULL);		// wait for clip hull process to finish
+
+#else
+// create the hulls sequentially
+	printf ("building hulls sequentially...\n");
+
+	hullnum = 1;
+	CreateSingleHull ();
+	
+	nummodels = 0;
+	numplanes = 0;
+	numclipnodes = 0;
+	hullnum = 2;
+	CreateSingleHull ();
+	
+	nummodels = 0;
+	numplanes = 0;
+	numclipnodes = 0;
+	hullnum = 0;
+	CreateSingleHull ();
+#endif	
+
+}
+
+/*
+=================
+ProcessFile
+
+=================
+*/
+void ProcessFile (char *sourcebase, char *bspfilename1)
+{
+// create filenames
+	strcpy (bspfilename, bspfilename1);
+	StripExtension (bspfilename);
+	strcat (bspfilename, ".bsp");
+
+	strcpy (hullfilename, bspfilename1);
+	StripExtension (hullfilename);
+	strcat (hullfilename, ".h0");
+
+	strcpy (portfilename, bspfilename1);
+	StripExtension (portfilename);
+	strcat (portfilename, ".prt");
+	
+	strcpy (pointfilename, bspfilename1);
+	StripExtension (pointfilename);
+	strcat (pointfilename, ".pts");
+
+	if (!onlyents)
+	{
+		remove (bspfilename);
+		if (!usehulls)
+		{
+			hullfilename[strlen(hullfilename)-1] = '1';
+			remove (hullfilename);
+			hullfilename[strlen(hullfilename)-1] = '2';
+			remove (hullfilename);
+		}
+		remove (portfilename);
+		remove (pointfilename);
+	}
+	
+// load brushes and entities
+	LoadMapFile (sourcebase);
+	if (onlyents)
+	{
+		UpdateEntLump ();
+		return;
+	}
+	
+// init the tables to be shared by all models
+	BeginBSPFile ();
+
+// the clipping hulls will be written out to text files by forked processes
+	CreateHulls ();
+
+	ReadClipHull (1);
+	ReadClipHull (2);
+
+	WriteEntitiesToString();
+	FinishBSPFile ();
+}
+
+
+/*
+==================
+main
+
+==================
+*/
+int main (int argc, char **argv)
+{
+	int			i;
+	double		start, end;
+	char		sourcename[1024];
+	char		destname[1024];
+	
+//	malloc_debug (15);
+
+//
+// check command line flags
+//
+	for (i=1 ; i<argc ; i++)
+	{
+		if (argv[i][0] != '-')
+			break;
+		else if (!strcmp (argv[i],"-draw"))
+			drawflag = true;
+		else if (!strcmp (argv[i],"-notjunc"))
+			notjunc = true;
+		else if (!strcmp (argv[i],"-nofill"))
+			nofill = true;
+		else if (!strcmp (argv[i],"-noclip"))
+			noclip = true;
+		else if (!strcmp (argv[i],"-onlyents"))
+			onlyents = true;
+		else if (!strcmp (argv[i],"-verbose"))
+			allverbose = true;
+		else if (!strcmp (argv[i],"-usehulls"))
+			usehulls = true;		// don't fork -- use the existing files
+		else if (!strcmp (argv[i],"-hullnum"))
+		{
+			hullnum = atoi(argv[i+1]);
+			i++;
+		}
+		else if (!strcmp (argv[i],"-subdivide"))
+		{
+			subdivide_size = atoi(argv[i+1]);
+			i++;
+		}
+		else
+			Error ("qbsp: Unknown option '%s'", argv[i]);
+	}
+	
+	if (i != argc - 2 && i != argc - 1)
+		Error ("usage: qbsp [options] sourcefile [destfile]\noptions: -nojunc -nofill -threads[124] -draw -onlyents -verbose -proj <projectpath>");
+
+	SetQdirFromPath (argv[i]);
+
+//
+// let forked processes change name for ps status
+//
+	argv0 = argv[0];
+
+	
+//
+// create destination name if not specified
+//
+	strcpy (sourcename, argv[i]);
+	DefaultExtension (sourcename, ".map");
+	
+	if (i != argc - 2)
+	{
+		strcpy (destname, argv[i]);
+		StripExtension (destname);
+		strcat (destname, ".bsp");
+		printf ("outputfile: %s\n", destname);
+	}
+	else
+		strcpy (destname, argv[i+1]);
+
+//
+// do it!
+//
+	start = I_FloatTime ();
+	ProcessFile (sourcename, destname);
+	end = I_FloatTime ();
+	printf ("%5.1f seconds elapsed\n", end-start);
+	
+	return 0;
+}
+
+================
+File: QBSP.MAK/QBSP.MAK
+================
+# Microsoft Developer Studio Generated NMAKE File, Format Version 4.00
+# ** DO NOT EDIT **
+
+# TARGTYPE "Win32 (x86) Console Application" 0x0103
+
+!IF "$(CFG)" == ""
+CFG=qbsp - Win32 Debug
+!MESSAGE No configuration specified.  Defaulting to qbsp - Win32 Debug.
+!ENDIF 
+
+!IF "$(CFG)" != "qbsp - Win32 Release" && "$(CFG)" != "qbsp - Win32 Debug"
+!MESSAGE Invalid configuration "$(CFG)" specified.
+!MESSAGE You can specify a configuration when running NMAKE on this makefile
+!MESSAGE by defining the macro CFG on the command line.  For example:
+!MESSAGE 
+!MESSAGE NMAKE /f "qbsp.mak" CFG="qbsp - Win32 Debug"
+!MESSAGE 
+!MESSAGE Possible choices for configuration are:
+!MESSAGE 
+!MESSAGE "qbsp - Win32 Release" (based on "Win32 (x86) Console Application")
+!MESSAGE "qbsp - Win32 Debug" (based on "Win32 (x86) Console Application")
+!MESSAGE 
+!ERROR An invalid configuration is specified.
+!ENDIF 
+
+!IF "$(OS)" == "Windows_NT"
+NULL=
+!ELSE 
+NULL=nul
+!ENDIF 
+################################################################################
+# Begin Project
+# PROP Target_Last_Scanned "qbsp - Win32 Debug"
+CPP=cl.exe
+RSC=rc.exe
+
+!IF  "$(CFG)" == "qbsp - Win32 Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "Release"
+# PROP BASE Intermediate_Dir "Release"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "Release"
+# PROP Intermediate_Dir "Release"
+# PROP Target_Dir ""
+OUTDIR=.\Release
+INTDIR=.\Release
+
+ALL : "$(OUTDIR)\qbsp.exe"
+
+CLEAN : 
+	-@erase ".\Release\qbsp.exe"
+	-@erase ".\Release\mathlib.obj"
+	-@erase ".\Release\solidbsp.obj"
+	-@erase ".\Release\portals.obj"
+	-@erase ".\Release\surfaces.obj"
+	-@erase ".\Release\nodraw.obj"
+	-@erase ".\Release\cmdlib.obj"
+	-@erase ".\Release\csg4.obj"
+	-@erase ".\Release\brush.obj"
+	-@erase ".\Release\merge.obj"
+	-@erase ".\Release\map.obj"
+	-@erase ".\Release\region.obj"
+	-@erase ".\Release\bspfile.obj"
+	-@erase ".\Release\writebsp.obj"
+	-@erase ".\Release\outside.obj"
+	-@erase ".\Release\qbsp.obj"
+	-@erase ".\Release\tjunc.obj"
+
+"$(OUTDIR)" :
+    if not exist "$(OUTDIR)/$(NULL)" mkdir "$(OUTDIR)"
+
+# ADD BASE CPP /nologo /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_CONSOLE" /YX /c
+# ADD CPP /nologo /GX /O2 /I "..\common" /D "WIN32" /D "NDEBUG" /D "_CONSOLE" /YX /c
+CPP_PROJ=/nologo /ML /GX /O2 /I "..\common" /D "WIN32" /D "NDEBUG" /D\
+ "_CONSOLE" /Fp"$(INTDIR)/qbsp.pch" /YX /Fo"$(INTDIR)/" /c 
+CPP_OBJS=.\Release/
+CPP_SBRS=
+# ADD BASE RSC /l 0x409 /d "NDEBUG"
+# ADD RSC /l 0x409 /d "NDEBUG"
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+BSC32_FLAGS=/nologo /o"$(OUTDIR)/qbsp.bsc" 
+BSC32_SBRS=
+LINK32=link.exe
+# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:console /machine:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:console /machine:I386
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib\
+ advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib\
+ odbccp32.lib /nologo /subsystem:console /incremental:no\
+ /pdb:"$(OUTDIR)/qbsp.pdb" /machine:I386 /out:"$(OUTDIR)/qbsp.exe" 
+LINK32_OBJS= \
+	".\Release\mathlib.obj" \
+	".\Release\solidbsp.obj" \
+	".\Release\portals.obj" \
+	".\Release\surfaces.obj" \
+	".\Release\nodraw.obj" \
+	".\Release\cmdlib.obj" \
+	".\Release\csg4.obj" \
+	".\Release\brush.obj" \
+	".\Release\merge.obj" \
+	".\Release\map.obj" \
+	".\Release\region.obj" \
+	".\Release\bspfile.obj" \
+	".\Release\writebsp.obj" \
+	".\Release\outside.obj" \
+	".\Release\qbsp.obj" \
+	".\Release\tjunc.obj"
+
+"$(OUTDIR)\qbsp.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
+    $(LINK32) @<<
+  $(LINK32_FLAGS) $(LINK32_OBJS)
+<<
+
+!ELSEIF  "$(CFG)" == "qbsp - Win32 Debug"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "Debug"
+# PROP BASE Intermediate_Dir "Debug"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir "Debug"
+# PROP Intermediate_Dir "Debug"
+# PROP Target_Dir ""
+OUTDIR=.\Debug
+INTDIR=.\Debug
+
+ALL : "$(OUTDIR)\qbsp.exe"
+
+CLEAN : 
+	-@erase ".\Debug\vc40.pdb"
+	-@erase ".\Debug\vc40.idb"
+	-@erase ".\Debug\qbsp.exe"
+	-@erase ".\Debug\region.obj"
+	-@erase ".\Debug\mathlib.obj"
+	-@erase ".\Debug\csg4.obj"
+	-@erase ".\Debug\portals.obj"
+	-@erase ".\Debug\surfaces.obj"
+	-@erase ".\Debug\tjunc.obj"
+	-@erase ".\Debug\nodraw.obj"
+	-@erase ".\Debug\outside.obj"
+	-@erase ".\Debug\map.obj"
+	-@erase ".\Debug\bspfile.obj"
+	-@erase ".\Debug\solidbsp.obj"
+	-@erase ".\Debug\brush.obj"
+	-@erase ".\Debug\merge.obj"
+	-@erase ".\Debug\qbsp.obj"
+	-@erase ".\Debug\cmdlib.obj"
+	-@erase ".\Debug\writebsp.obj"
+	-@erase ".\Debug\qbsp.ilk"
+	-@erase ".\Debug\qbsp.pdb"
+
+"$(OUTDIR)" :
+    if not exist "$(OUTDIR)/$(NULL)" mkdir "$(OUTDIR)"
+
+# ADD BASE CPP /nologo /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /YX /c
+# ADD CPP /nologo /Gm /GX /Zi /Od /I "..\common" /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /YX /c
+CPP_PROJ=/nologo /MLd /Gm /GX /Zi /Od /I "..\common" /D "WIN32" /D "_DEBUG" /D\
+ "_CONSOLE" /Fp"$(INTDIR)/qbsp.pch" /YX /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c 
+CPP_OBJS=.\Debug/
+CPP_SBRS=
+# ADD BASE RSC /l 0x409 /d "_DEBUG"
+# ADD RSC /l 0x409 /d "_DEBUG"
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+BSC32_FLAGS=/nologo /o"$(OUTDIR)/qbsp.bsc" 
+BSC32_SBRS=
+LINK32=link.exe
+# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:console /debug /machine:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:console /debug /machine:I386
+LINK32_FLAGS=kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib\
+ advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib\
+ odbccp32.lib /nologo /subsystem:console /incremental:yes\
+ /pdb:"$(OUTDIR)/qbsp.pdb" /debug /machine:I386 /out:"$(OUTDIR)/qbsp.exe" 
+LINK32_OBJS= \
+	".\Debug\region.obj" \
+	".\Debug\mathlib.obj" \
+	".\Debug\csg4.obj" \
+	".\Debug\portals.obj" \
+	".\Debug\surfaces.obj" \
+	".\Debug\tjunc.obj" \
+	".\Debug\nodraw.obj" \
+	".\Debug\outside.obj" \
+	".\Debug\map.obj" \
+	".\Debug\bspfile.obj" \
+	".\Debug\solidbsp.obj" \
+	".\Debug\brush.obj" \
+	".\Debug\merge.obj" \
+	".\Debug\qbsp.obj" \
+	".\Debug\cmdlib.obj" \
+	".\Debug\writebsp.obj"
+
+"$(OUTDIR)\qbsp.exe" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
+    $(LINK32) @<<
+  $(LINK32_FLAGS) $(LINK32_OBJS)
+<<
+
+!ENDIF 
+
+.c{$(CPP_OBJS)}.obj:
+   $(CPP) $(CPP_PROJ) $<  
+
+.cpp{$(CPP_OBJS)}.obj:
+   $(CPP) $(CPP_PROJ) $<  
+
+.cxx{$(CPP_OBJS)}.obj:
+   $(CPP) $(CPP_PROJ) $<  
+
+.c{$(CPP_SBRS)}.sbr:
+   $(CPP) $(CPP_PROJ) $<  
+
+.cpp{$(CPP_SBRS)}.sbr:
+   $(CPP) $(CPP_PROJ) $<  
+
+.cxx{$(CPP_SBRS)}.sbr:
+   $(CPP) $(CPP_PROJ) $<  
+
+################################################################################
+# Begin Target
+
+# Name "qbsp - Win32 Release"
+# Name "qbsp - Win32 Debug"
+
+!IF  "$(CFG)" == "qbsp - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "qbsp - Win32 Debug"
+
+!ENDIF 
+
+################################################################################
+# Begin Source File
+
+SOURCE=.\writebsp.c
+DEP_CPP_WRITE=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\writebsp.obj" : $(SOURCE) $(DEP_CPP_WRITE) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\tjunc.c
+DEP_CPP_TJUNC=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\tjunc.obj" : $(SOURCE) $(DEP_CPP_TJUNC) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\surfaces.c
+DEP_CPP_SURFA=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\surfaces.obj" : $(SOURCE) $(DEP_CPP_SURFA) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\solidbsp.c
+DEP_CPP_SOLID=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\solidbsp.obj" : $(SOURCE) $(DEP_CPP_SOLID) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\region.c
+DEP_CPP_REGIO=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\region.obj" : $(SOURCE) $(DEP_CPP_REGIO) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\qbsp.c
+DEP_CPP_QBSP_=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\qbsp.obj" : $(SOURCE) $(DEP_CPP_QBSP_) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\portals.c
+DEP_CPP_PORTA=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\portals.obj" : $(SOURCE) $(DEP_CPP_PORTA) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\outside.c
+DEP_CPP_OUTSI=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\outside.obj" : $(SOURCE) $(DEP_CPP_OUTSI) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\nodraw.c
+DEP_CPP_NODRA=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\nodraw.obj" : $(SOURCE) $(DEP_CPP_NODRA) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\merge.c
+DEP_CPP_MERGE=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\merge.obj" : $(SOURCE) $(DEP_CPP_MERGE) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\map.c
+DEP_CPP_MAP_C=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\map.obj" : $(SOURCE) $(DEP_CPP_MAP_C) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\csg4.c
+DEP_CPP_CSG4_=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\csg4.obj" : $(SOURCE) $(DEP_CPP_CSG4_) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=.\brush.c
+DEP_CPP_BRUSH=\
+	".\bsp5.h"\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	".\map.h"\
+	
+
+"$(INTDIR)\brush.obj" : $(SOURCE) $(DEP_CPP_BRUSH) "$(INTDIR)"
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=\quake\utils2\common\bspfile.c
+DEP_CPP_BSPFI=\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	".\..\common\bspfile.h"\
+	
+
+"$(INTDIR)\bspfile.obj" : $(SOURCE) $(DEP_CPP_BSPFI) "$(INTDIR)"
+   $(CPP) $(CPP_PROJ) $(SOURCE)
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=\quake\utils2\common\cmdlib.c
+DEP_CPP_CMDLI=\
+	".\..\common\cmdlib.h"\
+	{$(INCLUDE)}"\sys\TYPES.H"\
+	{$(INCLUDE)}"\sys\STAT.H"\
+	
+
+"$(INTDIR)\cmdlib.obj" : $(SOURCE) $(DEP_CPP_CMDLI) "$(INTDIR)"
+   $(CPP) $(CPP_PROJ) $(SOURCE)
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=\quake\utils2\common\mathlib.c
+DEP_CPP_MATHL=\
+	".\..\common\cmdlib.h"\
+	".\..\common\mathlib.h"\
+	
+
+"$(INTDIR)\mathlib.obj" : $(SOURCE) $(DEP_CPP_MATHL) "$(INTDIR)"
+   $(CPP) $(CPP_PROJ) $(SOURCE)
+
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=\quake\utils2\common\mathlib.h
+
+!IF  "$(CFG)" == "qbsp - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "qbsp - Win32 Debug"
+
+!ENDIF 
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=\quake\utils2\common\cmdlib.h
+
+!IF  "$(CFG)" == "qbsp - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "qbsp - Win32 Debug"
+
+!ENDIF 
+
+# End Source File
+################################################################################
+# Begin Source File
+
+SOURCE=\quake\utils2\common\bspfile.h
+
+!IF  "$(CFG)" == "qbsp - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "qbsp - Win32 Debug"
+
+!ENDIF 
+
+# End Source File
+# End Target
+# End Project
+################################################################################
+
+================
+File: REGION.C/REGION.C
+================
+// region.h
+
+#include "bsp5.h"
+
+/*
+
+input
+-----
+vertexes
+edges
+faces
+
+output
+------
+smaller set of vertexes
+smaller set of edges
+regions
+? triangulated regions
+face to region mapping numbers
+
+*/
+
+#define	MAX_EDGES_IN_REGION	32
+
+int		firstedge;
+
+vec3_t	region_mins, region_maxs;
+
+void AddPointToRegion (vec3_t p)
+{
+	int		i;
+	
+	for (i=0 ; i<3 ; i++)
+	{
+		if (p[i] < region_mins[i])
+			region_mins[i] = p[i];
+		if (p[i] > region_maxs[i])
+			region_maxs[i] = p[i];
+	}	
+}
+
+void ClearRegionSize (void)
+{
+	region_mins[0] = region_mins[1] = region_mins[2] = 9999;
+	region_maxs[0] = region_maxs[1] = region_maxs[2] = -9999;
+}
+
+void AddFaceToRegionSize (face_t *f)
+{
+	int		i;
+
+	for (i=0 ; i<f->numpoints ; i++)
+		AddPointToRegion (f->pts[i]);
+}
+
+/*
+==============
+CanJoinFaces
+==============
+*/
+qboolean CanJoinFaces (face_t *f, face_t *f2)
+{
+	vec3_t		oldmins, oldmaxs;
+	int			i;
+
+	if (f2->planenum != f->planenum
+	|| f2->planeside != f->planeside
+	|| f2->texturenum != f->texturenum)
+		return false;
+	if (f2->outputnumber != -1)
+		return false;
+	if (f2->contents[0] != f->contents[0])
+	{	// does this ever happen? theyy shouldn't share.
+		printf ("CanJoinFaces: edge with different contents");
+		return false;
+	}
+	
+// check size constraints
+	if ( ! (texinfo[f->texturenum].flags & TEX_SPECIAL) )
+	{	
+		VectorCopy (region_mins, oldmins);
+		VectorCopy (region_maxs, oldmaxs);
+		AddFaceToRegionSize (f2);
+		for (i=0 ; i<3 ; i++)
+		{
+			if (region_maxs[i] - region_mins[i] > 240)
+			{
+				VectorCopy (oldmins, region_mins);
+				VectorCopy (oldmaxs, region_maxs);
+				return false;
+			}
+		}
+	}
+	else
+	{
+		if (numsurfedges - firstedge + f2->numpoints > MAX_EDGES_IN_REGION)
+			return false;		// a huge water or sky polygon
+	}
+	
+// check edge count constraints
+	return true;
+}
+
+
+/*
+==============
+RecursiveGrowRegion
+==============
+*/
+void RecursiveGrowRegion (dface_t *r, face_t *f)
+{
+	int		e;
+	face_t	*f2;
+	int		i;
+	
+	if (f->outputnumber == numfaces)
+		return;
+
+	if (f->outputnumber != -1)
+		Error ("RecursiveGrowRegion: region collision");
+	f->outputnumber = numfaces;
+	
+// add edges	
+	for (i=0 ; i<f->numpoints ; i++)
+	{
+		e = f->edges[i];
+		if (!edgefaces[abs(e)][0])
+			continue;	// edge has allready been removed
+		if (e > 0)
+			f2 = edgefaces[e][1];
+		else
+			f2 = edgefaces[-e][0];
+		if (f2 && f2->outputnumber == numfaces)
+		{
+			edgefaces[abs(e)][0] = NULL;
+			edgefaces[abs(e)][1] = NULL;
+			continue;	// allready merged
+		}
+		if (f2 && CanJoinFaces (f, f2))
+		{	// remove the edge and merge the faces
+			edgefaces[abs(e)][0] = NULL;
+			edgefaces[abs(e)][1] = NULL;
+			RecursiveGrowRegion (r, f2);
+		}
+		else
+		{
+		// emit a surfedge
+			if (numsurfedges == MAX_MAP_SURFEDGES)
+				Error ("numsurfedges == MAX_MAP_SURFEDGES");
+			dsurfedges[numsurfedges] = e;
+			numsurfedges++;
+		}
+	}
+
+}
+
+void PrintDface (int f)
+{	// for debugging
+	dface_t	*df;
+	dedge_t	*e;
+	int		i, n;
+	
+	df = &dfaces[f];
+	for (i=0 ; i<df->numedges ; i++)
+	{
+		n = dsurfedges[df->firstedge+i];
+		e = &dedges[abs(n)];
+		if (n < 0)
+			printf ("%5i  =  %5i : %5i\n", n, e->v[1], e->v[0]);
+		else
+			printf ("%5i  =  %5i : %5i\n", n, e->v[0], e->v[1]);
+	}
+}
+
+void FindVertexUse (int v)
+{	// for debugging
+	int		i, j, n;
+	dface_t	*df;
+	dedge_t	*e;
+	
+	for (i=firstmodelface ; i<numfaces ; i++)
+	{
+		df = &dfaces[i];
+		for (j=0 ; j<df->numedges ; j++)
+		{
+			n = dsurfedges[df->firstedge+j];
+			e = &dedges[abs(n)];
+			if (e->v[0] == v || e->v[1] == v)
+			{
+				printf ("on face %i\n", i);
+				break;
+			}
+		}
+	}
+}
+
+void FindEdgeUse (int v)
+{	// for debugging
+	int		i, j, n;
+	dface_t	*df;
+	
+	for (i=firstmodelface ; i<numfaces ; i++)
+	{
+		df = &dfaces[i];
+		for (j=0 ; j<df->numedges ; j++)
+		{
+			n = dsurfedges[df->firstedge+j];
+			if (n == v || -n == v)
+			{
+				printf ("on face %i\n", i);
+				break;
+			}
+		}
+	}
+}
+
+/*
+================
+HealEdges
+
+Extends e1 so that it goes all the way to e2, and removes all references
+to e2
+================
+*/
+int		edgemapping[MAX_MAP_EDGES];
+void HealEdges (int e1, int e2)
+{
+	int		i, j, n, saved;
+	dface_t	*df;
+	dedge_t	*ed, *ed2;
+	vec3_t	v1, v2;
+	dface_t	*found[2];
+	int		foundj[2];
+
+return;	
+	e1 = edgemapping[e1];
+	e2 = edgemapping[e2];
+
+// extend e1 to e2
+	ed = &dedges[e1];
+	ed2 = &dedges[e2];
+	VectorSubtract (dvertexes[ed->v[1]].point, dvertexes[ed->v[0]].point, v1);
+	VectorNormalize (v1);
+	
+	if (ed->v[0] == ed2->v[0])
+		ed->v[0] = ed2->v[1];
+	else if (ed->v[0] == ed2->v[1])
+		ed->v[0] = ed2->v[0];
+	else if (ed->v[1] == ed2->v[0])
+		ed->v[1] = ed2->v[1];
+	else if (ed->v[1] == ed2->v[1])
+		ed->v[1] = ed2->v[0];
+	else
+		Error ("HealEdges: edges don't meet");
+
+	VectorSubtract (dvertexes[ed->v[1]].point, dvertexes[ed->v[0]].point, v2);
+	VectorNormalize (v2);
+	
+	if (!VectorCompare (v1, v2))
+		Error ("HealEdges: edges not colinear");
+
+	edgemapping[e2] = e1;
+	saved = 0;
+	
+// remove all uses of e2
+	for (i=firstmodelface ; i<numfaces ; i++)
+	{
+		df = &dfaces[i];
+		for (j=0 ; j<df->numedges ; j++)
+		{
+			n = dsurfedges[df->firstedge+j];
+			if (n == e2 || n == -e2)
+			{
+				found[saved] = df;
+				foundj[saved] = j;
+				saved++;
+				break;
+			}
+		}
+	}
+	
+	if (saved != 2)
+		printf ("WARNING: didn't find both faces for a saved edge\n");
+	else
+	{
+		for (i=0 ; i<2 ; i++)
+		{	// remove this edge
+			df = found[i];
+			j = foundj[i];
+			for (j++ ; j<df->numedges ; j++)
+				dsurfedges[df->firstedge+j-1] =
+				dsurfedges[df->firstedge+j];
+			dsurfedges[df->firstedge+j-1] = 0;
+			df->numedges--;
+		}
+
+
+		edgefaces[e2][0] = edgefaces[e2][1] = NULL;
+	}
+}
+
+typedef struct
+{
+	int		numedges;
+	int		edges[2];
+} checkpoint_t;
+
+checkpoint_t	checkpoints[MAX_MAP_VERTS];
+
+/*
+==============
+RemoveColinearEdges
+==============
+*/
+void RemoveColinearEdges (void)
+{
+	int		i,j, v;
+	int		c0, c1, c2, c3;
+	checkpoint_t	*cp;
+	
+// no edges remapped yet
+	for (i=0 ; i<numedges ; i++)
+		edgemapping[i] = i;
+		
+// find vertexes that only have two edges
+	memset (checkpoints, 0, sizeof(checkpoints));
+	
+	for (i=firstmodeledge ; i<numedges ; i++)
+	{
+		if (!edgefaces[i][0])
+			continue;		// removed
+		for (j=0 ; j<2 ; j++)
+		{
+			v = dedges[i].v[j];
+			cp = &checkpoints[v];
+			if (cp->numedges<2)
+				cp->edges[cp->numedges] = i;
+			cp->numedges++;
+		}
+	}
+	
+// if a vertex only has two edges and they are colinear, it can be removed
+	c0 = c1 = c2 = c3 = 0;
+	
+	for (i=0 ; i<numvertexes ; i++)
+	{
+		cp = &checkpoints[i];
+		switch (cp->numedges)
+		{
+		case 0:
+			c0++;
+			break;
+		case 1:
+			c1++;
+			break;
+		case 2:
+			c2++;
+			HealEdges (cp->edges[0], cp->edges[1]);
+			break;
+		default:
+			c3++;
+			break;
+		}
+	}
+	
+//	qprintf ("%5i c0\n", c0);
+//	qprintf ("%5i c1\n", c1);
+//	qprintf ("%5i c2\n", c2);
+//	qprintf ("%5i c3+\n", c3);
+	qprintf ("%5i deges removed by tjunction healing\n", c2);
+}
+
+/*
+==============
+CountRealNumbers
+==============
+*/
+void CountRealNumbers (void)
+{
+	int		i;
+	int		c;
+	
+	qprintf ("%5i regions\n", numfaces-firstmodelface);
+
+	c = 0;
+	for (i=firstmodelface ; i<numfaces ; i++)
+		c += dfaces[i].numedges;
+	qprintf ("%5i real marksurfaces\n", c);
+	
+	c = 0;
+	for (i=firstmodeledge ; i<numedges ; i++)
+		if (edgefaces[i][0])
+			c++;		// not removed
+
+	qprintf ("%5i real edges\n", c);
+}
+
+//=============================================================================
+
+/*
+==============
+GrowNodeRegion_r
+==============
+*/
+void GrowNodeRegion_r (node_t *node)
+{
+	dface_t		*r;
+	face_t		*f;
+	int			i;
+
+	if (node->planenum == PLANENUM_LEAF)
+		return;
+
+	node->firstface = numfaces;
+
+	for (f=node->faces ; f ; f=f->next)
+	{
+//		if (f->outputnumber != -1)
+//			continue;	// allready grown into an earlier region
+			
+	// emit a region
+
+		if (numfaces == MAX_MAP_FACES)
+			Error ("MAX_MAP_FACES");
+		f->outputnumber = numfaces;
+		r = &dfaces[numfaces];
+
+		r->planenum = node->outputplanenum;
+		r->side = f->planeside;
+		r->texinfo = f->texturenum;
+		for (i=0 ; i<MAXLIGHTMAPS ; i++)
+			r->styles[i] = 255;
+		r->lightofs = -1;
+
+	// add the face and mergable neighbors to it
+	
+#if 0
+		ClearRegionSize ();
+		AddFaceToRegionSize (f);
+		RecursiveGrowRegion (r, f);
+#endif
+		r->firstedge = firstedge = numsurfedges;
+		for (i=0 ; i<f->numpoints ; i++)
+		{
+			if (numsurfedges == MAX_MAP_SURFEDGES)
+				Error ("numsurfedges == MAX_MAP_SURFEDGES");
+			dsurfedges[numsurfedges] = f->edges[i];
+			numsurfedges++;
+		}
+		
+		r->numedges = numsurfedges - r->firstedge;
+
+		numfaces++;
+	}
+
+	node->numfaces = numfaces - node->firstface;
+
+	GrowNodeRegion_r (node->children[0]);
+	GrowNodeRegion_r (node->children[1]);
+}
+
+
+/*
+==============
+GrowNodeRegions
+==============
+*/
+void GrowNodeRegions (node_t *headnode)
+{
+	qprintf ("---- GrowRegions ----\n");
+		
+	GrowNodeRegion_r (headnode);
+		
+//RemoveColinearEdges ();
+	CountRealNumbers ();
+}
+
+/*
+===============================================================================
+
+Turn the faces on a plane into optimal non-convex regions
+The edges may still be split later as a result of tjunctions
+
+typedef struct
+{
+	vec3_t	dir;
+	vec3_t	origin;
+	vec3_t	p[2];
+} 
+for all faces
+	for all edges
+		for all edges so far
+			if overlap
+				split
+				
+
+===============================================================================
+*/
+
+================
+File: SOLIDBSP.C/SOLIDBSP.C
+================
+// solidbsp.c
+
+#include "bsp5.h"
+
+int		leaffaces;
+int		nodefaces;
+int		splitnodes;
+
+int		c_solid, c_empty, c_water;
+
+qboolean		usemidsplit;
+
+//============================================================================
+
+/*
+==================
+FaceSide
+
+For BSP hueristic
+==================
+*/
+int FaceSide (face_t *in, plane_t *split)
+{
+	int		frontcount, backcount;
+	vec_t	dot;
+	int		i;
+	vec_t	*p;
+	
+	
+	frontcount = backcount = 0;
+	
+// axial planes are fast
+	if (split->type < 3)
+		for (i=0, p = in->pts[0]+split->type ; i<in->numpoints ; i++, p+=3)
+		{
+			if (*p > split->dist + ON_EPSILON)
+			{
+				if (backcount)
+					return SIDE_ON;
+				frontcount = 1;
+			}
+			else if (*p < split->dist - ON_EPSILON)
+			{
+				if (frontcount)
+					return SIDE_ON;
+				backcount = 1;
+			}
+		}
+	else	
+// sloping planes take longer
+		for (i=0, p = in->pts[0] ; i<in->numpoints ; i++, p+=3)
+		{
+			dot = DotProduct (p, split->normal);
+			dot -= split->dist;
+			if (dot > ON_EPSILON)
+			{
+				if (backcount)
+					return SIDE_ON;
+				frontcount = 1;
+			}
+			else if (dot < -ON_EPSILON)
+			{
+				if (frontcount)
+					return SIDE_ON;
+				backcount = 1;
+			}
+		}
+	
+	if (!frontcount)
+		return SIDE_BACK;
+	if (!backcount)
+		return SIDE_FRONT;
+	
+	return SIDE_ON;
+}
+
+/*
+==================
+ChooseMidPlaneFromList
+
+The clipping hull BSP doesn't worry about avoiding splits
+==================
+*/
+surface_t *ChooseMidPlaneFromList (surface_t *surfaces, vec3_t mins, vec3_t maxs)
+{
+	int			j,l;
+	surface_t	*p, *bestsurface;
+	vec_t		bestvalue, value, dist;
+	plane_t		*plane;
+
+//
+// pick the plane that splits the least
+//
+	bestvalue = 6*8192*8192;
+	bestsurface = NULL;
+	
+	for (p=surfaces ; p ; p=p->next)
+	{
+		if (p->onnode)
+			continue;
+
+		plane = &planes[p->planenum];
+		
+	// check for axis aligned surfaces
+		l = plane->type;
+		if (l > PLANE_Z)
+			continue;
+
+	//
+	// calculate the split metric along axis l, smaller values are better
+	//
+		value = 0;
+
+		dist = plane->dist * plane->normal[l];
+		for (j=0 ; j<3 ; j++)
+		{
+			if (j == l)
+			{
+				value += (maxs[l]-dist)*(maxs[l]-dist);
+				value += (dist-mins[l])*(dist-mins[l]);
+			}
+			else
+				value += 2*(maxs[j]-mins[j])*(maxs[j]-mins[j]);
+		}
+		
+		if (value > bestvalue)
+			continue;
+		
+	//
+	// currently the best!
+	//
+		bestvalue = value;
+		bestsurface = p;
+	}
+
+	if (!bestsurface)
+	{
+		for (p=surfaces ; p ; p=p->next)
+			if (!p->onnode)
+				return p;		// first valid surface
+		Error ("ChooseMidPlaneFromList: no valid planes");
+	}
+		
+	return bestsurface;
+}
+
+
+
+/*
+==================
+ChoosePlaneFromList
+
+The real BSP hueristic
+==================
+*/
+surface_t *ChoosePlaneFromList (surface_t *surfaces, vec3_t mins, vec3_t maxs, qboolean usefloors)
+{
+	int			j,k,l;
+	surface_t	*p, *p2, *bestsurface;
+	vec_t		bestvalue, bestdistribution, value, dist;
+	plane_t		*plane;
+	face_t		*f;
+	
+//
+// pick the plane that splits the least
+//
+	bestvalue = 99999;
+	bestsurface = NULL;
+	bestdistribution = 9e30;
+	
+	for (p=surfaces ; p ; p=p->next)
+	{
+		if (p->onnode)
+			continue;
+
+		plane = &planes[p->planenum];
+		k = 0;
+
+		if (!usefloors && plane->normal[2] == 1)
+			continue;
+
+		for (p2=surfaces ; p2 ; p2=p2->next)
+		{
+			if (p2 == p)
+				continue;
+			if (p2->onnode)
+				continue;
+				
+			for (f=p2->faces ; f ; f=f->next)
+			{
+				if (FaceSide (f, plane) == SIDE_ON)
+				{
+					k++;
+					if (k >= bestvalue)
+						break;
+				}
+				
+			}
+			if (k > bestvalue)
+				break;
+		}
+
+		if (k > bestvalue)
+			continue;
+			
+	// if equal numbers, axial planes win, then decide on spatial subdivision
+	
+		if (k < bestvalue || (k == bestvalue && plane->type < PLANE_ANYX) )
+		{
+		// check for axis aligned surfaces
+			l = plane->type;
+	
+			if (l <= PLANE_Z)
+			{	// axial aligned						
+			//
+			// calculate the split metric along axis l
+			//
+				value = 0;
+		
+				for (j=0 ; j<3 ; j++)
+				{
+					if (j == l)
+					{
+						dist = plane->dist * plane->normal[l];
+						value += (maxs[l]-dist)*(maxs[l]-dist);
+						value += (dist-mins[l])*(dist-mins[l]);
+					}
+					else
+						value += 2*(maxs[j]-mins[j])*(maxs[j]-mins[j]);
+				}
+				
+				if (value > bestdistribution && k == bestvalue)
+					continue;
+				bestdistribution = value;
+			}
+		//
+		// currently the best!
+		//
+			bestvalue = k;
+			bestsurface = p;
+		}
+
+	}
+
+
+	return bestsurface;
+}
+
+
+/*
+==================
+SelectPartition
+
+Selects a surface from a linked list of surfaces to split the group on
+returns NULL if the surface list can not be divided any more (a leaf)
+==================
+*/
+surface_t *SelectPartition (surface_t *surfaces)
+{
+	int			i,j;
+	vec3_t		mins, maxs;
+	surface_t	*p, *bestsurface;
+
+//
+// count onnode surfaces
+//
+	i = 0;
+	bestsurface = NULL;
+	for (p=surfaces ; p ; p=p->next)
+		if (!p->onnode)
+		{
+			i++;
+			bestsurface = p;
+		}
+		
+	if (i==0)
+		return NULL;
+		
+	if (i==1)
+		return bestsurface;	// this is a final split
+	
+//
+// calculate a bounding box of the entire surfaceset
+//
+	for (i=0 ; i<3 ; i++)
+	{
+		mins[i] = 99999;
+		maxs[i] = -99999;
+	}
+
+	for (p=surfaces ; p ; p=p->next)
+		for (j=0 ; j<3 ; j++)
+		{
+			if (p->mins[j] < mins[j])
+				mins[j] = p->mins[j];
+			if (p->maxs[j] > maxs[j])
+				maxs[j] = p->maxs[j];
+		}
+
+	if (usemidsplit) // do fast way for clipping hull
+		return ChooseMidPlaneFromList (surfaces, mins, maxs);
+		
+// do slow way to save poly splits for drawing hull
+#if 0
+	bestsurface = ChoosePlaneFromList (surfaces, mins, maxs, false);
+	if (bestsurface)	
+		return bestsurface;
+#endif		
+	return ChoosePlaneFromList (surfaces, mins, maxs, true);
+}
+
+//============================================================================
+
+/*
+=================
+CalcSurfaceInfo
+
+Calculates the bounding box
+=================
+*/
+void CalcSurfaceInfo (surface_t *surf)
+{
+	int		i,j;
+	face_t	*f;
+	
+	if (!surf->faces)
+		Error ("CalcSurfaceInfo: surface without a face");
+		
+//
+// calculate a bounding box
+//
+	for (i=0 ; i<3 ; i++)
+	{
+		surf->mins[i] = 99999;
+		surf->maxs[i] = -99999;
+	}
+
+	for (f=surf->faces ; f ; f=f->next)
+	{
+if (f->contents[0] >= 0 || f->contents[1] >= 0)
+Error ("Bad contents");
+		for (i=0 ; i<f->numpoints ; i++)
+			for (j=0 ; j<3 ; j++)
+			{
+				if (f->pts[i][j] < surf->mins[j])
+					surf->mins[j] = f->pts[i][j];
+				if (f->pts[i][j] > surf->maxs[j])
+					surf->maxs[j] = f->pts[i][j];
+			}
+	}
+}
+
+
+
+/*
+==================
+DividePlane
+==================
+*/
+void DividePlane (surface_t *in, plane_t *split, surface_t **front, surface_t **back)
+{
+	face_t		*facet, *next;
+	face_t		*frontlist, *backlist;
+	face_t		*frontfrag, *backfrag;
+	surface_t	*news;
+	plane_t		*inplane;	
+	
+	inplane = &planes[in->planenum];
+	
+// parallel case is easy
+	if (VectorCompare (inplane->normal, split->normal))
+	{
+// check for exactly on node
+		if (inplane->dist == split->dist)
+		{	// divide the facets to the front and back sides
+			news = AllocSurface ();
+			*news = *in;
+
+			facet=in->faces;
+			in->faces = NULL;
+			news->faces = NULL;
+			in->onnode = news->onnode = true;
+			
+			for ( ; facet ; facet=next)
+			{
+				next = facet->next;
+				if (facet->planeside == 1)
+				{
+					facet->next = news->faces;
+					news->faces = facet;
+				}
+				else
+				{
+					facet->next = in->faces;
+					in->faces = facet;
+				}
+			}
+				
+			if (in->faces)
+				*front = in;
+			else
+				*front = NULL;
+			if (news->faces)
+				*back = news;
+			else
+				*back = NULL;
+			return;
+		}
+		
+		if (inplane->dist > split->dist)
+		{
+			*front = in;
+			*back = NULL;
+		}
+		else
+		{
+			*front = NULL;
+			*back = in;
+		}
+		return;
+	}
+	
+// do a real split.  may still end up entirely on one side
+// OPTIMIZE: use bounding box for fast test
+	frontlist = NULL;
+	backlist = NULL;
+	
+	for (facet = in->faces ; facet ; facet = next)
+	{
+		next = facet->next;
+		SplitFace (facet, split, &frontfrag, &backfrag);
+		if (frontfrag)
+		{
+			frontfrag->next = frontlist;
+			frontlist = frontfrag;
+		}
+		if (backfrag)
+		{
+			backfrag->next = backlist;
+			backlist = backfrag;
+		}
+	}
+
+// if nothing actually got split, just move the in plane
+	
+	if (frontlist == NULL)
+	{
+		*front = NULL;
+		*back = in;
+		in->faces = backlist;
+		return;
+	}
+
+	if (backlist == NULL)
+	{
+		*front = in;
+		*back = NULL;
+		in->faces = frontlist;
+		return;
+	}
+	
+
+// stuff got split, so allocate one new plane and reuse in
+	news = AllocSurface ();
+	*news = *in;
+	news->faces = backlist;
+	*back = news;
+	
+	in->faces = frontlist;
+	*front = in;
+	
+// recalc bboxes and flags
+	CalcSurfaceInfo (news);
+	CalcSurfaceInfo (in);	
+}
+
+/*
+==================
+DivideNodeBounds
+==================
+*/
+void DivideNodeBounds (node_t *node, plane_t *split)
+{
+	VectorCopy (node->mins, node->children[0]->mins);
+	VectorCopy (node->mins, node->children[1]->mins);
+	VectorCopy (node->maxs, node->children[0]->maxs);
+	VectorCopy (node->maxs, node->children[1]->maxs);
+
+// OPTIMIZE: sloping cuts can give a better bbox than this...
+	if (split->type > 2)
+		return;
+
+	node->children[0]->mins[split->type] =
+	node->children[1]->maxs[split->type] = split->dist;
+}
+
+/*
+==================
+LinkConvexFaces
+
+Determines the contents of the leaf and creates the final list of
+original faces that have some fragment inside this leaf
+==================
+*/
+void LinkConvexFaces (surface_t *planelist, node_t *leafnode)
+{
+	face_t		*f, *next;
+	surface_t	*surf, *pnext;
+	int			i, count;
+	
+	leafnode->faces = NULL;
+	leafnode->contents = 0;
+	leafnode->planenum = -1;
+
+	count = 0;
+	for ( surf = planelist ; surf ; surf = surf->next)
+	{
+		for (f = surf->faces ; f ; f=f->next)
+		{
+			count++;
+			if (!leafnode->contents)
+				leafnode->contents = f->contents[0];
+			else if (leafnode->contents != f->contents[0])
+				Error ("Mixed face contents in leafnode");
+		}
+	}
+
+	if (!leafnode->contents)
+		leafnode->contents = CONTENTS_SOLID;
+		
+	switch (leafnode->contents)
+	{
+	case CONTENTS_EMPTY:
+		c_empty++;
+		break;
+	case CONTENTS_SOLID:
+		c_solid++;
+		break;
+	case CONTENTS_WATER:
+	case CONTENTS_SLIME:
+	case CONTENTS_LAVA:
+	case CONTENTS_SKY:
+		c_water++;
+		break;
+	default:
+		Error ("LinkConvexFaces: bad contents number");
+	}
+
+//
+// write the list of faces, and free the originals
+//
+	leaffaces += count;
+	leafnode->markfaces = malloc(sizeof(face_t *)*(count+1));
+	i = 0;
+	for ( surf = planelist ; surf ; surf = pnext)
+	{
+		pnext = surf->next;
+		for (f = surf->faces ; f ; f=next)
+		{
+			next = f->next;
+			leafnode->markfaces[i] = f->original;
+			i++;
+			FreeFace (f);
+		}
+		FreeSurface (surf);
+	}
+	leafnode->markfaces[i] = NULL;	// sentinal
+}
+
+
+/*
+==================
+LinkNodeFaces
+
+Returns a duplicated list of all faces on surface
+==================
+*/
+face_t *LinkNodeFaces (surface_t *surface)
+{
+	face_t	*f, *new, **prevptr;
+	face_t	*list;
+	
+	list = NULL;
+	
+	
+// subdivide
+	prevptr = &surface->faces;
+	while (1)
+	{
+		f = *prevptr;
+		if (!f)
+			break;
+		SubdivideFace (f, prevptr);
+		f = *prevptr;
+		prevptr = &f->next;
+	}
+
+// copy
+	for (f=surface->faces ; f ; f=f->next)
+	{
+		nodefaces++;
+		new = AllocFace ();
+		*new = *f;
+		f->original = new;
+		new->next = list;
+		list = new;
+	}
+
+	return list;
+}
+
+
+/*
+==================
+PartitionSurfaces
+==================
+*/
+void PartitionSurfaces (surface_t *surfaces, node_t *node)
+{
+	surface_t	*split, *p, *next;
+	surface_t	*frontlist, *backlist;
+	surface_t	*frontfrag, *backfrag;
+	plane_t		*splitplane;
+	
+	split = SelectPartition (surfaces);
+	if (!split)
+	{	// this is a leaf node
+		node->planenum = PLANENUM_LEAF;
+		LinkConvexFaces (surfaces, node);
+		return;
+	}
+		
+	splitnodes++;
+	node->faces = LinkNodeFaces (split);
+	node->children[0] = AllocNode ();
+	node->children[1] = AllocNode ();
+	node->planenum = split->planenum;
+
+	splitplane = &planes[split->planenum];
+	
+	DivideNodeBounds (node, splitplane);
+
+
+//
+// multiple surfaces, so split all the polysurfaces into front and back lists
+//
+	frontlist = NULL;
+	backlist = NULL;
+	
+	for (p=surfaces ; p ; p=next)
+	{
+		next = p->next;
+		DividePlane (p, splitplane, &frontfrag, &backfrag);
+		if (frontfrag && backfrag)
+		{
+		// the plane was split, which may expose oportunities to merge
+		// adjacent faces into a single face
+//			MergePlaneFaces (frontfrag);
+//			MergePlaneFaces (backfrag);
+		}
+
+		if (frontfrag)
+		{
+			if (!frontfrag->faces)
+				Error ("surface with no faces");
+			frontfrag->next = frontlist;
+			frontlist = frontfrag;
+		}
+		if (backfrag)
+		{
+			if (!backfrag->faces)
+				Error ("surface with no faces");
+			backfrag->next = backlist;
+			backlist = backfrag;
+		}
+	}
+
+	PartitionSurfaces (frontlist, node->children[0]);
+	PartitionSurfaces (backlist, node->children[1]);
+}
+
+/*
+==================
+DrawSurface
+==================
+*/
+void DrawSurface (surface_t *surf)
+{
+	face_t	*f;
+	
+	for (f=surf->faces ; f ; f=f->next)
+		Draw_DrawFace (f);
+}
+
+/*
+==================
+DrawSurfaceList
+==================
+*/
+void DrawSurfaceList (surface_t *surf)
+{	
+	Draw_ClearWindow ();
+	while (surf)
+	{
+		DrawSurface (surf);
+		surf = surf->next;
+	}
+}
+
+/*
+==================
+SolidBSP
+==================
+*/
+node_t *SolidBSP (surface_t *surfhead, qboolean midsplit)
+{
+	int		i;
+	node_t	*headnode;
+	
+	qprintf ("----- SolidBSP -----\n");
+
+	headnode = AllocNode ();
+	usemidsplit = midsplit;
+	
+//
+// calculate a bounding box for the entire model
+//
+	for (i=0 ; i<3 ; i++)
+	{
+		headnode->mins[i] = brushset->mins[i] - SIDESPACE;
+		headnode->maxs[i] = brushset->maxs[i] + SIDESPACE;
+	}
+	
+//
+// recursively partition everything
+//
+	Draw_ClearWindow ();
+	splitnodes = 0;
+	leaffaces = 0;
+	nodefaces = 0;
+	c_solid = c_empty = c_water = 0;
+
+	PartitionSurfaces (surfhead, headnode);
+
+	qprintf ("%5i split nodes\n", splitnodes);
+	qprintf ("%5i solid leafs\n", c_solid);
+	qprintf ("%5i empty leafs\n", c_empty);
+	qprintf ("%5i water leafs\n", c_water);	
+	qprintf ("%5i leaffaces\n",leaffaces);
+	qprintf ("%5i nodefaces\n", nodefaces);
+	
+	return headnode;
+}
+
+================
+File: SURFACES.C/SURFACES.C
+================
+// divide.h
+
+#include "bsp5.h"
+
+
+surface_t	newcopy_t;
+
+/*
+a surface has all of the faces that could be drawn on a given plane
+
+the outside filling stage can remove some of them so a better bsp can be generated
+
+*/
+
+int	subdivides;
+
+
+/*
+===============
+SubdivideFace
+
+If the face is >256 in either texture direction, carve a valid sized
+piece off and insert the remainder in the next link
+===============
+*/
+void SubdivideFace (face_t *f, face_t **prevptr)
+{
+	float		mins, maxs;
+	vec_t		v;
+	int			axis, i;
+	plane_t		plane;
+	face_t		*front, *back, *next;
+	texinfo_t	*tex;
+
+// special (non-surface cached) faces don't need subdivision
+	tex = &texinfo[f->texturenum];
+
+	if ( tex->flags & TEX_SPECIAL)
+		return;
+
+
+	for (axis = 0 ; axis < 2 ; axis++)
+	{
+		while (1)
+		{
+			mins = 9999;
+			maxs = -9999;
+			
+			for (i=0 ; i<f->numpoints ; i++)
+			{
+				v = DotProduct (f->pts[i], tex->vecs[axis]);
+				if (v < mins)
+					mins = v;
+				if (v > maxs)
+					maxs = v;
+			}
+		
+			if (maxs - mins <= subdivide_size)
+				break;
+			
+		// split it
+			subdivides++;
+			
+			VectorCopy (tex->vecs[axis], plane.normal);
+			v = VectorLength (plane.normal);
+			VectorNormalize (plane.normal);			
+			plane.dist = (mins + subdivide_size - 16)/v;
+			next = f->next;
+			SplitFace (f, &plane, &front, &back);
+			if (!front || !back)
+				Error ("SubdivideFace: didn't split the polygon");
+			*prevptr = back;
+			back->next = front;
+			front->next = next;
+			f = back;
+		}
+	}
+}
+
+
+/*
+================
+SubdivideFaces
+================
+*/
+void SubdivideFaces (surface_t *surfhead)
+{
+	surface_t       *surf;
+	face_t          *f , **prevptr;
+
+	qprintf ("--- SubdivideFaces ---\n");
+
+	subdivides = 0;
+
+	for (surf = surfhead ; surf ; surf=surf->next)
+	{
+		prevptr = &surf->faces;
+		while (1)
+		{
+			f = *prevptr;
+			if (!f)
+				break;
+			SubdivideFace (f, prevptr);
+			f = *prevptr;
+			prevptr = &f->next;
+		}
+	}
+
+	qprintf ("%i faces added by subdivision\n", subdivides);
+	
+}
+
+
+/*
+=============================================================================
+
+GatherNodeFaces
+
+Frees the current node tree and returns a new chain of the surfaces that
+have inside faces.
+=============================================================================
+*/
+
+void GatherNodeFaces_r (node_t *node)
+{
+	face_t	*f, *next;
+	
+	if (node->planenum != PLANENUM_LEAF)
+	{
+//
+// decision node
+//
+		for (f=node->faces ; f ; f=next)
+		{
+			next = f->next;
+			if (!f->numpoints)
+			{	// face was removed outside
+				FreeFace (f);
+			}
+			else
+			{
+				f->next = validfaces[f->planenum];
+				validfaces[f->planenum] = f;
+			}
+		}
+		
+		GatherNodeFaces_r (node->children[0]);
+		GatherNodeFaces_r (node->children[1]);
+		
+		free (node);
+	}
+	else
+	{
+//
+// leaf node
+//
+		free (node);
+	}
+}
+
+/*
+================
+GatherNodeFaces
+
+================
+*/
+surface_t *GatherNodeFaces (node_t *headnode)
+{
+	memset (validfaces, 0, sizeof(validfaces));
+	GatherNodeFaces_r (headnode);
+	return BuildSurfaces ();	
+}
+
+//===========================================================================
+
+typedef struct hashvert_s
+{
+	struct hashvert_s	*next;
+	vec3_t	point;
+	int		num;
+	int		numplanes;		// for corner determination
+	int		planenums[2];
+	int		numedges;
+} hashvert_t;
+
+#define	POINT_EPSILON	0.01
+
+int		c_cornerverts;
+
+hashvert_t	hvertex[MAX_MAP_VERTS];
+hashvert_t	*hvert_p;
+
+face_t		*edgefaces[MAX_MAP_EDGES][2];
+int		firstmodeledge = 1;
+int		firstmodelface;
+
+//============================================================================
+
+#define	NUM_HASH	4096
+
+hashvert_t	*hashverts[NUM_HASH];
+
+static	vec3_t	hash_min, hash_scale;
+
+static	void InitHash (void)
+{
+	vec3_t	size;
+	vec_t	volume;
+	vec_t	scale;
+	int		newsize[2];
+	int		i;
+	
+	memset (hashverts, 0, sizeof(hashverts));
+
+	for (i=0 ; i<3 ; i++)
+	{
+		hash_min[i] = -8000;
+		size[i] = 16000;
+	}
+
+	volume = size[0]*size[1];
+	
+	scale = sqrt(volume / NUM_HASH);
+
+	newsize[0] = size[0] / scale;
+	newsize[1] = size[1] / scale;
+
+	hash_scale[0] = newsize[0] / size[0];
+	hash_scale[1] = newsize[1] / size[1];
+	hash_scale[2] = newsize[1];
+	
+	hvert_p = hvertex;
+}
+
+static	unsigned HashVec (vec3_t vec)
+{
+	unsigned	h;
+	
+	h =	hash_scale[0] * (vec[0] - hash_min[0]) * hash_scale[2]
+		+ hash_scale[1] * (vec[1] - hash_min[1]);
+	if ( h >= NUM_HASH)
+		return NUM_HASH - 1;
+	return h;
+}
+
+
+/*
+=============
+GetVertex
+=============
+*/
+int	GetVertex (vec3_t in, int planenum)
+{
+	int			h;
+	int			i;
+	hashvert_t	*hv;
+	vec3_t		vert;
+	
+	for (i=0 ; i<3 ; i++)
+	{
+		if ( fabs(in[i] - Q_rint(in[i])) < 0.001)
+			vert[i] = Q_rint(in[i]);
+		else
+			vert[i] = in[i];
+	}
+	
+	h = HashVec (vert);
+	
+	for (hv=hashverts[h] ; hv ; hv=hv->next)
+	{
+		if ( fabs(hv->point[0]-vert[0])<POINT_EPSILON
+		&& fabs(hv->point[1]-vert[1])<POINT_EPSILON
+		&& fabs(hv->point[2]-vert[2])<POINT_EPSILON )
+		{
+			hv->numedges++;
+			if (hv->numplanes == 3)
+				return hv->num;		// allready known to be a corner
+			for (i=0 ; i<hv->numplanes ; i++)
+				if (hv->planenums[i] == planenum)
+					return hv->num;		// allready know this plane
+			if (hv->numplanes == 2)
+				c_cornerverts++;
+			else
+				hv->planenums[hv->numplanes] = planenum;
+			hv->numplanes++;
+			return hv->num;
+		}
+	}
+	
+	hv = hvert_p;
+	hv->numedges = 1;
+	hv->numplanes = 1;
+	hv->planenums[0] = planenum;
+	hv->next = hashverts[h];
+	hashverts[h] = hv;
+	VectorCopy (vert, hv->point);
+	hv->num = numvertexes;
+	if (hv->num==MAX_MAP_VERTS)
+		Error ("GetVertex: MAX_MAP_VERTS");
+	hvert_p++;
+		
+// emit a vertex
+	if (numvertexes == MAX_MAP_VERTS)
+		Error ("numvertexes == MAX_MAP_VERTS");
+
+	dvertexes[numvertexes].point[0] = vert[0];
+	dvertexes[numvertexes].point[1] = vert[1];
+	dvertexes[numvertexes].point[2] = vert[2];
+	numvertexes++;
+
+	return hv->num;
+}
+
+//===========================================================================
+
+
+/*
+==================
+GetEdge
+
+Don't allow four way edges
+==================
+*/
+int	c_tryedges;
+
+int GetEdge (vec3_t p1, vec3_t p2, face_t *f)
+{
+	int		v1, v2;
+	dedge_t	*edge;
+	int		i;
+
+	if (!f->contents[0])
+		Error ("GetEdge: 0 contents");
+
+	c_tryedges++;		
+	v1 = GetVertex (p1, f->planenum);
+	v2 = GetVertex (p2, f->planenum);
+	for (i=firstmodeledge ; i < numedges ; i++)
+	{
+		edge = &dedges[i];
+		if (v1 == edge->v[1] && v2 == edge->v[0]
+		&& !edgefaces[i][1]
+		&& edgefaces[i][0]->contents[0] == f->contents[0])
+		{
+			edgefaces[i][1] = f;
+			return -i;
+		}
+	}
+	
+// emit an edge
+	if (numedges == MAX_MAP_EDGES)
+		Error ("numedges == MAX_MAP_EDGES");
+	edge = &dedges[numedges];
+	numedges++;
+	edge->v[0] = v1;
+	edge->v[1] = v2;
+	edgefaces[i][0] = f;
+	
+	return i;
+}
+
+
+/*
+==================
+FindFaceEdges
+==================
+*/
+void FindFaceEdges (face_t *face)
+{
+	int		i;
+
+	face->outputnumber = -1;	
+	if (face->numpoints > MAXEDGES)
+		Error ("WriteFace: %i points", face->numpoints);
+
+	for (i=0; i<face->numpoints ; i++)
+		face->edges[i] =  GetEdge
+		(face->pts[i], face->pts[(i+1)%face->numpoints], face);	
+}
+
+/*
+=============
+CheckVertexes
+// debugging
+=============
+*/
+void CheckVertexes (void)
+{
+	int		cb, c0, c1, c2, c3;	
+	hashvert_t	*hv;
+	
+	cb = c0 = c1 = c2 = c3 = 0;
+	for (hv=hvertex ; hv!=hvert_p ; hv++)
+	{
+		if (hv->numedges < 0 || hv->numedges & 1)
+			cb++;
+		else if (!hv->numedges)
+			c0++;
+		else if (hv->numedges == 2)
+			c1++;
+		else if (hv->numedges == 4)
+			c2++;
+		else
+			c3++;
+	}
+	
+	qprintf ("%5i bad edge points\n", cb);
+	qprintf ("%5i 0 edge points\n", c0);
+	qprintf ("%5i 2 edge points\n", c1);
+	qprintf ("%5i 4 edge points\n", c2);
+	qprintf ("%5i 6+ edge points\n", c3);
+}
+
+/*
+=============
+CheckEdges
+// debugging
+=============
+*/
+void CheckEdges (void)
+{
+	dedge_t	*edge;
+	int		i;
+	dvertex_t	*d1, *d2;
+	face_t		*f1, *f2;
+	int		c_nonconvex;
+	int		c_multitexture;
+	
+	c_nonconvex = c_multitexture = 0;
+	
+//	CheckVertexes ();
+	
+	for (i=1 ; i < numedges ; i++)
+	{
+		edge = &dedges[i];
+		if (!edgefaces[i][1])
+		{
+			d1 = &dvertexes[edge->v[0]];
+			d2 = &dvertexes[edge->v[1]];
+			qprintf ("unshared edge at: (%8.2f, %8.2f, %8.2f) (%8.2f, %8.2f, %8.2f)\n",d1->point[0], d1->point[1], d1->point[2], d2->point[0], d2->point[1], d2->point[2]); 
+		}
+		else
+		{
+			f1 = edgefaces[i][0];
+			f2 = edgefaces[i][1];
+			if (f1->planeside != f2->planeside)
+				continue;
+			if (f1->planenum != f2->planenum)
+				continue;
+				
+			// on the same plane, might be discardable
+			if (f1->texturenum == f2->texturenum)
+			{
+				hvertex[edge->v[0]].numedges-=2;
+				hvertex[edge->v[1]].numedges-=2;
+				c_nonconvex++;
+			}
+			else
+				c_multitexture++;
+		}
+	}
+
+//	qprintf ("%5i edges\n", i);
+//	qprintf ("%5i c_nonconvex\n", c_nonconvex);
+//	qprintf ("%5i c_multitexture\n", c_multitexture);
+
+//	CheckVertexes ();
+}
+
+
+/*
+================
+MakeFaceEdges_r
+================
+*/
+void MakeFaceEdges_r (node_t *node)
+{
+	face_t	*f;
+	
+	if (node->planenum == PLANENUM_LEAF)
+		return;
+		
+	for (f=node->faces ; f ; f=f->next)
+		FindFaceEdges (f);
+		
+	MakeFaceEdges_r (node->children[0]);
+	MakeFaceEdges_r (node->children[1]);
+}
+
+/*
+================
+MakeFaceEdges
+================
+*/
+void MakeFaceEdges (node_t *headnode)
+{
+	qprintf ("----- MakeFaceEdges -----\n");
+	
+	InitHash ();
+	c_tryedges = 0;
+	c_cornerverts = 0;
+	
+	MakeFaceEdges_r (headnode);
+
+//	CheckEdges ();
+
+	GrowNodeRegions (headnode);
+
+	firstmodeledge = numedges;
+	firstmodelface = numfaces;
+}
+
+================
+File: TJUNC.C/TJUNC.C
+================
+// tjunc.c
+
+#include "bsp5.h"
+
+
+typedef struct wvert_s
+{
+	vec_t	t;
+	struct wvert_s *prev, *next;
+} wvert_t;
+
+typedef struct wedge_s
+{
+	struct wedge_s *next;
+	vec3_t	dir;
+	vec3_t	origin;
+	wvert_t	head;
+} wedge_t;
+
+int		numwedges, numwverts;
+int		tjuncs;
+int		tjuncfaces;
+
+#define	MAXWVERTS	0x20000
+#define	MAXWEDGES	0x10000
+
+
+wvert_t	wverts[MAXWVERTS];
+wedge_t	wedges[MAXWEDGES];
+
+
+void PrintFace (face_t *f)
+{
+	int		i;
+	
+	for (i=0 ; i<f->numpoints ; i++)
+		printf ("(%5.2f, %5.2f, %5.2f)\n", f->pts[i][0], f->pts[i][1], f->pts[i][2]);
+}
+
+//============================================================================
+
+#define	NUM_HASH	1024
+
+wedge_t	*wedge_hash[NUM_HASH];
+
+static	vec3_t	hash_min, hash_scale;
+
+static	void InitHash (vec3_t mins, vec3_t maxs)
+{
+	vec3_t	size;
+	vec_t	volume;
+	vec_t	scale;
+	int		newsize[2];
+	
+	VectorCopy (mins, hash_min);
+	VectorSubtract (maxs, mins, size);
+	memset (wedge_hash, 0, sizeof(wedge_hash));
+	
+	volume = size[0]*size[1];
+	
+	scale = sqrt(volume / NUM_HASH);
+
+	newsize[0] = size[0] / scale;
+	newsize[1] = size[1] / scale;
+
+	hash_scale[0] = newsize[0] / size[0];
+	hash_scale[1] = newsize[1] / size[1];
+	hash_scale[2] = newsize[1];
+}
+
+static	unsigned HashVec (vec3_t vec)
+{
+	unsigned	h;
+
+	h =	hash_scale[0] * (vec[0] - hash_min[0]) * hash_scale[2]
+		+ hash_scale[1] * (vec[1] - hash_min[1]);
+	if ( h >= NUM_HASH)
+		return NUM_HASH - 1;
+	return h;
+}
+
+//============================================================================
+
+void CanonicalVector (vec3_t vec)
+{
+	VectorNormalize (vec);
+	if (vec[0] > EQUAL_EPSILON)
+		return;
+	else if (vec[0] < -EQUAL_EPSILON)
+	{
+		VectorSubtract (vec3_origin, vec, vec);
+		return;
+	}
+	else
+		vec[0] = 0;
+
+	if (vec[1] > EQUAL_EPSILON)
+		return;
+	else if (vec[1] < -EQUAL_EPSILON)
+	{
+		VectorSubtract (vec3_origin, vec, vec);
+		return;
+	}
+	else
+		vec[1] = 0;
+		
+	if (vec[2] > EQUAL_EPSILON)
+		return;
+	else if (vec[2] < -EQUAL_EPSILON)
+	{
+		VectorSubtract (vec3_origin, vec, vec);
+		return;
+	}
+	else
+		vec[2] = 0;
+	Error ("CanonicalVector: degenerate");
+}
+
+wedge_t	*FindEdge (vec3_t p1, vec3_t p2, vec_t *t1, vec_t *t2)
+{
+	vec3_t	origin;
+	vec3_t	dir;
+	wedge_t	*w;
+	vec_t	temp;
+	int		h;
+	
+	VectorSubtract (p2, p1, dir);
+	CanonicalVector (dir);
+
+	*t1 = DotProduct (p1, dir);
+	*t2 = DotProduct (p2, dir);
+
+	VectorMA (p1, -*t1, dir, origin);
+
+	if (*t1 > *t2)
+	{
+		temp = *t1;
+		*t1 = *t2;
+		*t2 = temp;
+	}
+	
+	h = HashVec (origin);
+
+	for (w = wedge_hash[h] ; w ; w=w->next)
+	{
+		temp = w->origin[0] - origin[0];
+		if (temp < -EQUAL_EPSILON || temp > EQUAL_EPSILON)
+			continue;
+		temp = w->origin[1] - origin[1];
+		if (temp < -EQUAL_EPSILON || temp > EQUAL_EPSILON)
+			continue;
+		temp = w->origin[2] - origin[2];
+		if (temp < -EQUAL_EPSILON || temp > EQUAL_EPSILON)
+			continue;
+		
+		temp = w->dir[0] - dir[0];
+		if (temp < -EQUAL_EPSILON || temp > EQUAL_EPSILON)
+			continue;
+		temp = w->dir[1] - dir[1];
+		if (temp < -EQUAL_EPSILON || temp > EQUAL_EPSILON)
+			continue;
+		temp = w->dir[2] - dir[2];
+		if (temp < -EQUAL_EPSILON || temp > EQUAL_EPSILON)
+			continue;
+
+		return w;
+	}
+	
+	if (numwedges == MAXWEDGES)
+		Error ("FindEdge: numwedges == MAXWEDGES");
+	w = &wedges[numwedges];
+	numwedges++;
+	
+	w->next = wedge_hash[h];
+	wedge_hash[h] = w;
+	
+	VectorCopy (origin, w->origin);
+	VectorCopy (dir, w->dir);
+	w->head.next = w->head.prev = &w->head;
+	w->head.t = 99999;
+	return w;
+}
+
+
+/*
+===============
+AddVert
+
+===============
+*/
+#define	T_EPSILON	0.01
+
+void AddVert (wedge_t *w, vec_t t)
+{
+	wvert_t	*v, *newv;
+	
+	v = w->head.next;
+	do
+	{
+		if (fabs(v->t - t) < T_EPSILON)
+			return;
+		if (v->t > t)
+			break;
+		v = v->next;
+	} while (1);
+		
+// insert a new wvert before v
+	if (numwverts == MAXWVERTS)
+		Error ("AddVert: numwverts == MAXWVERTS");
+
+	newv = &wverts[numwverts];
+	numwverts++;
+	
+	newv->t = t;
+	newv->next = v;
+	newv->prev = v->prev;
+	v->prev->next = newv;
+	v->prev = newv;
+}
+
+
+/*
+===============
+AddEdge
+
+===============
+*/
+void AddEdge (vec3_t p1, vec3_t p2)
+{
+	wedge_t	*w;
+	vec_t	t1, t2;
+	
+	w = FindEdge(p1, p2, &t1, &t2);
+	AddVert (w, t1);
+	AddVert (w, t2);
+}
+
+/*
+===============
+AddFaceEdges
+
+===============
+*/
+void AddFaceEdges (face_t *f)
+{
+	int		i, j;
+	
+	for (i=0 ; i < f->numpoints ; i++)
+	{
+		 j = (i+1)%f->numpoints;
+		 AddEdge (f->pts[i], f->pts[j]);
+	}
+}
+
+
+//============================================================================
+
+// a specially allocated face that can hold hundreds of edges if needed
+byte	superfacebuf[8192];
+face_t	*superface = (face_t *)superfacebuf;
+
+void FixFaceEdges (face_t *f);
+
+face_t	*newlist;
+
+void SplitFaceForTjunc (face_t *f, face_t *original)
+{
+	int			i;
+	face_t		*new, *chain;
+	vec3_t		dir, test;
+	vec_t		v;
+	int			firstcorner, lastcorner;
+	
+	chain = NULL;
+	do
+	{
+		if (f->numpoints <= MAXPOINTS)
+		{	// the face is now small enough without more cutting
+			// so copy it back to the original
+			*original = *f;
+			original->original = chain;
+			original->next = newlist;
+			newlist = original;
+			return;
+		}
+		
+		tjuncfaces++;
+		
+restart:	
+	// find the last corner	
+		VectorSubtract (f->pts[f->numpoints-1], f->pts[0], dir);
+		VectorNormalize (dir);		
+		for (lastcorner=f->numpoints-1 ; lastcorner > 0 ; lastcorner--)
+		{
+			VectorSubtract (f->pts[lastcorner-1], f->pts[lastcorner], test);
+			VectorNormalize (test);
+			v = DotProduct (test, dir);
+			if (v < 0.9999 || v > 1.00001)
+			{
+				break;
+			}
+		}
+	
+	// find the first corner	
+		VectorSubtract (f->pts[1], f->pts[0], dir);
+		VectorNormalize (dir);		
+		for (firstcorner=1 ; firstcorner < f->numpoints-1 ; firstcorner++)
+		{
+			VectorSubtract (f->pts[firstcorner+1], f->pts[firstcorner], test);
+			VectorNormalize (test);
+			v = DotProduct (test, dir);
+			if (v < 0.9999 || v > 1.00001)
+			{
+				break;
+			}
+		}
+	
+		if (firstcorner+2 >= MAXPOINTS)
+		{
+		// rotate the point winding
+			VectorCopy (f->pts[0], test);
+			for (i=1 ; i<f->numpoints ; i++)
+			{
+				VectorCopy (f->pts[i], f->pts[i-1]);
+			}
+			VectorCopy (test, f->pts[f->numpoints-1]);
+			goto restart;
+		}
+		
+		
+	// cut off as big a piece as possible, less than MAXPOINTS, and not
+	// past lastcorner
+			
+		new = NewFaceFromFace (f);
+		if (f->original)
+			Error ("SplitFaceForTjunc: f->original");
+			
+		new->original = chain;
+		chain = new;
+		new->next = newlist;
+		newlist = new;
+		if (f->numpoints - firstcorner <= MAXPOINTS)
+			new->numpoints = firstcorner+2;
+		else if (lastcorner+2 < MAXPOINTS &&
+		f->numpoints - lastcorner <= MAXPOINTS)
+			new->numpoints = lastcorner+2;
+		else
+			new->numpoints = MAXPOINTS;
+
+		for (i=0 ; i<new->numpoints ; i++)
+		{
+			VectorCopy (f->pts[i], new->pts[i]);
+		}
+		
+		
+		for (i=new->numpoints-1 ; i<f->numpoints ; i++)
+		{
+			VectorCopy (f->pts[i], f->pts[i-(new->numpoints-2)]);
+		}
+		f->numpoints -= (new->numpoints-2);
+	} while (1);
+
+}
+
+
+/*
+===============
+FixFaceEdges
+
+===============
+*/
+void FixFaceEdges (face_t *f)
+{
+	int		i, j, k;
+	wedge_t	*w;
+	wvert_t	*v;
+	vec_t	t1, t2;
+
+	*superface = *f;
+	
+restart:
+	for (i=0 ; i < superface->numpoints ; i++)
+	{
+		 j = (i+1)%superface->numpoints;
+
+		w = FindEdge (superface->pts[i], superface->pts[j], &t1, &t2);
+		
+		for (v=w->head.next ; v->t < t1 + T_EPSILON ; v = v->next)
+		{
+		}
+		
+		if (v->t < t2-T_EPSILON)
+		{
+			tjuncs++;
+		// insert a new vertex here
+			for (k = superface->numpoints ; k> j ; k--)
+			{
+				VectorCopy (superface->pts[k-1], superface->pts[k]);
+			}
+			VectorMA (w->origin, v->t, w->dir, superface->pts[j]);
+			superface->numpoints++;
+			goto restart;	
+		}
+	}
+
+
+	if (superface->numpoints <= MAXPOINTS)
+	{
+		*f = *superface;
+		f->next = newlist;
+		newlist = f;
+		return;
+	} 
+
+// the face needs to be split into multiple faces because of too many edges
+
+	SplitFaceForTjunc (superface, f);
+
+}
+
+
+//============================================================================
+
+void tjunc_find_r (node_t *node)
+{
+	face_t	*f;
+
+	if (node->planenum == PLANENUM_LEAF)
+		return;
+		
+	for (f=node->faces ; f ; f=f->next)
+		AddFaceEdges (f);
+		
+	tjunc_find_r (node->children[0]);
+	tjunc_find_r (node->children[1]);
+}
+
+void tjunc_fix_r (node_t *node)
+{
+	face_t	*f, *next;
+
+	if (node->planenum == PLANENUM_LEAF)
+		return;
+		
+	newlist = NULL;
+	
+	for (f=node->faces ; f ; f=next)
+	{
+		next = f->next;
+		FixFaceEdges (f);
+	}
+
+	node->faces = newlist;
+
+	tjunc_fix_r (node->children[0]);
+	tjunc_fix_r (node->children[1]);
+}
+
+/*
+===========
+tjunc
+
+===========
+*/
+void tjunc (node_t *headnode)
+{
+	vec3_t	maxs, mins;
+	int		i;
+	
+	qprintf ("---- tjunc ----\n");
+	
+	if (notjunc)
+		return;
+
+//
+// identify all points on common edges
+//
+
+// origin points won't allways be inside the map, so extend the hash area 
+	for (i=0 ; i<3 ; i++)
+	{
+		if ( fabs(brushset->maxs[i]) > fabs(brushset->mins[i]) )
+			maxs[i] = fabs(brushset->maxs[i]);
+		else
+			maxs[i] = fabs(brushset->mins[i]);
+	}
+	VectorSubtract (vec3_origin, maxs, mins);
+	
+	InitHash (mins, maxs);
+	
+	numwedges = numwverts = 0;
+
+	tjunc_find_r (headnode);
+		
+	qprintf ("%i world edges  %i edge points\n", numwedges, numwverts);
+
+//
+// add extra vertexes on edges where needed
+//
+	tjuncs = tjuncfaces = 0;
+
+	tjunc_fix_r (headnode);
+
+	qprintf ("%i edges added by tjunctions\n", tjuncs);
+	qprintf ("%i faces added by tjunctions\n", tjuncfaces);
+}
+
+================
+File: WRITEBSP.C/WRITEBSP.C
+================
+#include "bsp5.h"
+
+
+int		headclipnode;
+int		firstface;
+
+//===========================================================================
+
+/*
+==================
+FindFinalPlane
+
+Used to find plane index numbers for clip nodes read from child processes
+==================
+*/
+int FindFinalPlane (dplane_t *p)
+{
+	int		i;
+	dplane_t	*dplane;
+	
+	for (i=0, dplane = dplanes ; i<numplanes ; i++, dplane++)
+	{
+		if (p->type != dplane->type)
+			continue;
+		if (p->dist != dplane->dist)
+			continue;
+		if (p->normal[0] != dplane->normal[0])
+			continue;
+		if (p->normal[1] != dplane->normal[1])
+			continue;
+		if (p->normal[2] != dplane->normal[2])
+			continue;
+		return i;
+	}
+	
+//
+// new plane
+//
+	if (numplanes == MAX_MAP_PLANES)
+		Error ("numplanes == MAX_MAP_PLANES");
+	dplane = &dplanes[numplanes];
+	*dplane = *p;
+	numplanes++;
+	
+	return numplanes - 1;
+}
+
+
+
+int		planemapping[MAX_MAP_PLANES];
+
+void WriteNodePlanes_r (node_t *node)
+{
+	plane_t		*plane;
+	dplane_t	*dplane;
+
+	if (node->planenum == -1)
+		return;
+	if (planemapping[node->planenum] == -1)
+	{	// a new plane
+		planemapping[node->planenum] = numplanes;
+		
+		if (numplanes == MAX_MAP_PLANES)
+			Error ("numplanes == MAX_MAP_PLANES");
+		plane = &planes[node->planenum];
+		dplane = &dplanes[numplanes];
+		dplane->normal[0] = plane->normal[0];
+		dplane->normal[1] = plane->normal[1];
+		dplane->normal[2] = plane->normal[2];
+		dplane->dist = plane->dist;
+		dplane->type = plane->type;
+
+		numplanes++;
+	}
+
+	node->outputplanenum = planemapping[node->planenum];
+	
+	WriteNodePlanes_r (node->children[0]);
+	WriteNodePlanes_r (node->children[1]);
+}
+
+/*
+==================
+WriteNodePlanes
+
+==================
+*/
+void WriteNodePlanes (node_t *nodes)
+{
+	memset (planemapping,-1, sizeof(planemapping));
+	WriteNodePlanes_r (nodes);
+}
+
+//===========================================================================
+
+/*
+==================
+WriteClipNodes_r
+
+==================
+*/
+int WriteClipNodes_r (node_t *node)
+{
+	int			i, c;
+	dclipnode_t	*cn;
+	int			num;
+	
+// FIXME: free more stuff?	
+	if (node->planenum == -1)
+	{
+		num = node->contents;
+		free (node);
+		return num;
+	}
+	
+// emit a clipnode
+	c = numclipnodes;
+	cn = &dclipnodes[numclipnodes];
+	numclipnodes++;
+	cn->planenum = node->outputplanenum;
+	for (i=0 ; i<2 ; i++)
+		cn->children[i] = WriteClipNodes_r(node->children[i]);
+	
+	free (node);
+	return c;
+}
+
+/*
+==================
+WriteClipNodes
+
+Called after the clipping hull is completed.  Generates a disk format
+representation and frees the original memory.
+==================
+*/
+void WriteClipNodes (node_t *nodes)
+{
+	headclipnode = numclipnodes;
+	WriteClipNodes_r (nodes);
+}
+
+//===========================================================================
+
+/*
+==================
+WriteLeaf
+==================
+*/
+void WriteLeaf (node_t *node)
+{
+	face_t		**fp, *f;
+	dleaf_t		*leaf_p;
+		
+// emit a leaf
+	leaf_p = &dleafs[numleafs];
+	numleafs++;
+
+	leaf_p->contents = node->contents;
+
+//
+// write bounding box info
+//	
+	VectorCopy (node->mins, leaf_p->mins);
+	VectorCopy (node->maxs, leaf_p->maxs);
+	
+	leaf_p->visofs = -1;	// no vis info yet
+	
+//
+// write the marksurfaces
+//
+	leaf_p->firstmarksurface = nummarksurfaces;
+	
+	for (fp=node->markfaces ; *fp ; fp++)
+	{
+	// emit a marksurface
+		if (nummarksurfaces == MAX_MAP_MARKSURFACES)
+			Error ("nummarksurfaces == MAX_MAP_MARKSURFACES");
+		f = *fp;
+		do
+		{
+			dmarksurfaces[nummarksurfaces] =  f->outputnumber;
+			nummarksurfaces++;
+			f=f->original;		// grab tjunction split faces
+		} while (f);
+	}
+	
+	leaf_p->nummarksurfaces = nummarksurfaces - leaf_p->firstmarksurface;
+}
+
+
+/*
+==================
+WriteDrawNodes_r
+==================
+*/
+void WriteDrawNodes_r (node_t *node)
+{
+	dnode_t	*n;
+	int		i;
+
+// emit a node	
+	if (numnodes == MAX_MAP_NODES)
+		Error ("numnodes == MAX_MAP_NODES");
+	n = &dnodes[numnodes];
+	numnodes++;
+
+	VectorCopy (node->mins, n->mins);
+	VectorCopy (node->maxs, n->maxs);
+
+	n->planenum = node->outputplanenum;
+	n->firstface = node->firstface;
+	n->numfaces = node->numfaces;
+
+//
+// recursively output the other nodes
+//	
+	
+	for (i=0 ; i<2 ; i++)
+	{
+		if (node->children[i]->planenum == -1)
+		{
+			if (node->children[i]->contents == CONTENTS_SOLID)
+				n->children[i] = -1;
+			else
+			{
+				n->children[i] = -(numleafs + 1);
+				WriteLeaf (node->children[i]);
+			}
+		}
+		else
+		{
+			n->children[i] = numnodes;	
+			WriteDrawNodes_r (node->children[i]);
+		}
+	}
+}
+
+/*
+==================
+WriteDrawNodes
+==================
+*/
+void WriteDrawNodes (node_t *headnode)
+{
+	int		i;
+	int		start;
+	dmodel_t	*bm;
+
+#if 0
+	if (headnode->contents < 0)
+		Error ("FinishBSPModel: empty model");
+#endif
+
+// emit a model
+	if (nummodels == MAX_MAP_MODELS)
+		Error ("nummodels == MAX_MAP_MODELS");
+	bm = &dmodels[nummodels];
+	nummodels++;
+	
+	bm->headnode[0] = numnodes;
+	bm->firstface = firstface;
+	bm->numfaces = numfaces - firstface;	
+	firstface = numfaces;
+	
+	start = numleafs;
+
+	if (headnode->contents < 0)	
+		WriteLeaf (headnode);
+	else
+		WriteDrawNodes_r (headnode);
+	bm->visleafs = numleafs - start;
+	
+	for (i=0 ; i<3 ; i++)
+	{
+		bm->mins[i] = headnode->mins[i] + SIDESPACE + 1;	// remove the padding
+		bm->maxs[i] = headnode->maxs[i] - SIDESPACE - 1;
+	}
+// FIXME: are all the children decendant of padded nodes?
+}
+
+
+/*
+==================
+BumpModel
+
+Used by the clipping hull processes that only need to store headclipnode
+==================
+*/
+void BumpModel (int hullnum)
+{
+	dmodel_t	*bm;
+
+// emit a model
+	if (nummodels == MAX_MAP_MODELS)
+		Error ("nummodels == MAX_MAP_MODELS");
+	bm = &dmodels[nummodels];
+	nummodels++;
+	
+	bm->headnode[hullnum] = headclipnode;
+}
+
+//=============================================================================
+
+typedef struct
+{
+	char		identification[4];		// should be WAD2
+	int			numlumps;
+	int			infotableofs;
+} wadinfo_t;
+
+
+typedef struct
+{
+	int			filepos;
+	int			disksize;
+	int			size;					// uncompressed
+	char		type;
+	char		compression;
+	char		pad1, pad2;
+	char		name[16];				// must be null terminated
+} lumpinfo_t;
+
+FILE		*texfile;
+wadinfo_t	wadinfo;
+lumpinfo_t	*lumpinfo;
+
+void CleanupName (char *in, char *out)
+{
+	int		i;
+	
+	for (i=0 ; i< 16 ; i++ )
+	{
+		if (!in[i])
+			break;
+			
+		out[i] = toupper(in[i]);
+	}
+	
+	for ( ; i< 16 ; i++ )
+		out[i] = 0;
+}
+
+
+/*
+=================
+TEX_InitFromWad
+=================
+*/
+void	TEX_InitFromWad (char *path)
+{
+	int			i;
+	
+	texfile = SafeOpenRead (path);
+	SafeRead (texfile, &wadinfo, sizeof(wadinfo));
+	if (strncmp (wadinfo.identification, "WAD2", 4))
+		Error ("TEX_InitFromWad: %s isn't a wadfile",path);
+	wadinfo.numlumps = LittleLong(wadinfo.numlumps);
+	wadinfo.infotableofs = LittleLong(wadinfo.infotableofs);
+	fseek (texfile, wadinfo.infotableofs, SEEK_SET);
+	lumpinfo = malloc(wadinfo.numlumps*sizeof(lumpinfo_t));
+	SafeRead (texfile, lumpinfo, wadinfo.numlumps*sizeof(lumpinfo_t));
+	
+	for (i=0 ; i<wadinfo.numlumps ; i++)
+	{
+		CleanupName (lumpinfo[i].name, lumpinfo[i].name);
+		lumpinfo[i].filepos = LittleLong(lumpinfo[i].filepos);
+		lumpinfo[i].disksize = LittleLong(lumpinfo[i].disksize);
+	}
+}
+
+/*
+==================
+LoadLump
+==================
+*/
+int LoadLump (char *name, byte *dest)
+{
+	int		i;
+	char	cname[16];
+	
+	CleanupName (name, cname);
+	
+	for (i=0 ; i<wadinfo.numlumps ; i++)
+	{
+		if (!strcmp(cname, lumpinfo[i].name))
+		{
+			fseek (texfile, lumpinfo[i].filepos, SEEK_SET);
+			SafeRead (texfile, dest, lumpinfo[i].disksize);
+			return lumpinfo[i].disksize;
+		}
+	}
+	
+	printf ("WARNING: texture %s not found\n", name);
+	return 0;
+}
+
+
+/*
+==================
+AddAnimatingTextures
+==================
+*/
+void AddAnimatingTextures (void)
+{
+	int		base;
+	int		i, j, k;
+	char	name[32];
+
+	base = nummiptex;
+	
+	for (i=0 ; i<base ; i++)
+	{
+		if (miptex[i][0] != '+')
+			continue;
+		strcpy (name, miptex[i]);
+
+		for (j=0 ; j<20 ; j++)
+		{
+			if (j < 10)
+				name[1] = '0'+j;
+			else
+				name[1] = 'A'+j-10;		// alternate animation
+			
+
+		// see if this name exists in the wadfile
+			for (k=0 ; k<wadinfo.numlumps ; k++)
+				if (!strcmp(name, lumpinfo[k].name))
+				{
+					FindMiptex (name);	// add to the miptex list
+					break;
+				}
+		}
+	}
+	
+	printf ("added %i texture frames\n", nummiptex - base);
+}
+
+/*
+==================
+WriteMiptex
+==================
+*/
+void WriteMiptex (void)
+{
+	int		i, len;
+	byte	*data;
+	dmiptexlump_t	*l;
+	char	*path;
+	char	fullpath[1024];
+
+	path = ValueForKey (&entities[0], "_wad");
+	if (!path || !path[0])
+	{
+		path = ValueForKey (&entities[0], "wad");
+		if (!path || !path[0])
+		{
+			printf ("WARNING: no wadfile specified\n");
+			texdatasize = 0;
+			return;
+		}
+	}
+	
+	sprintf (fullpath, "%s/%s", gamedir, path);
+
+	TEX_InitFromWad (fullpath);
+	
+	AddAnimatingTextures ();
+
+	l = (dmiptexlump_t *)dtexdata;
+	data = (byte *)&l->dataofs[nummiptex];
+	l->nummiptex = nummiptex;
+	for (i=0 ; i<nummiptex ; i++)
+	{
+		l->dataofs[i] = data - (byte *)l;
+		len = LoadLump (miptex[i], data);
+		if (data + len - dtexdata >= MAX_MAP_MIPTEX)
+			Error ("Textures exceeded MAX_MAP_MIPTEX");
+		if (!len)
+			l->dataofs[i] = -1;	// didn't find the texture
+		data += len;
+	}
+
+	texdatasize = data - dtexdata;
+}
+
+//===========================================================================
+
+
+/*
+==================
+BeginBSPFile
+==================
+*/
+void BeginBSPFile (void)
+{
+// edge 0 is not used, because 0 can't be negated
+	numedges = 1;
+
+// leaf 0 is common solid with no faces
+	numleafs = 1;
+	dleafs[0].contents = CONTENTS_SOLID;
+
+	firstface = 0;	
+}
+
+
+/*
+==================
+FinishBSPFile
+==================
+*/
+void FinishBSPFile (void)
+{
+	printf ("--- FinishBSPFile ---\n");
+	printf ("WriteBSPFile: %s\n", bspfilename);
+	
+	WriteMiptex ();
+
+	PrintBSPFileSizes ();
+	WriteBSPFile (bspfilename);
+}
+
+
+
+================================================================
+End of Codebase
+================================================================

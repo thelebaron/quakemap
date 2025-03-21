@@ -1,10 +1,9 @@
-﻿using ScriptsSandbox.Util;
-using Sledge.Formats.Map.Objects;
+﻿using Sledge.Formats.Map.Objects;
 using Unity.Mathematics;
 using UnityEngine;
 using Plane = Unity.Mathematics.Geometry.Plane;
 
-namespace Tools
+namespace Junk.Sludge
 {
     public static class Paraxial
     {

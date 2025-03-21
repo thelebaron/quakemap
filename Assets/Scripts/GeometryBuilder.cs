@@ -1,8 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
-using Mapping;
 using Sledge.Formats.Map.Objects;
-using Tools;
+using Junk.Sludge;
 using Unity.Mathematics;
 using UnityEngine;
 using Mesh = UnityEngine.Mesh;

@@ -1,23 +1,38 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using Junk.Math;
+using Unity.Mathematics;
+using Unity.Mathematics.Geometry;
 
-namespace Sledge.Formats.Precision
+namespace Junk.Sludge.Formats.Geometric
 {
     /// <summary>
-    /// Represents a coplanar, directed polygon with at least 3 vertices. Uses high-precision value types.
+    /// Represents a coplanar, directed polygon with at least 3 vertices.
     /// </summary>
     public class Polygon
     {
-        public IReadOnlyList<Vector3> Vertices { get; }
+        /// <summary>
+        /// The vertices for the polygon, in counter-clockwise order when looking at the visible face of the polygon.
+        /// </summary>
+        public IReadOnlyList<float3> Vertices { get; }
 
         public Plane Plane => new Plane(Vertices[0], Vertices[1], Vertices[2]);
-        public Vector3 Origin => Vertices.Aggregate(Vector3.Zero, (x, y) => x + y) / Vertices.Count;
+        public float3 Origin => Vertices.Aggregate(float3.zero, (x, y) => x + y) / Vertices.Count;
 
         /// <summary>
         /// Creates a polygon from a list of points
         /// </summary>
         /// <param name="vertices">The vertices of the polygon</param>
-        public Polygon(IEnumerable<Vector3> vertices)
+        public Polygon(IEnumerable<float3> vertices)
+        {
+            Vertices = vertices.ToList();
+        }
+
+        /// <summary>
+        /// Creates a polygon from a list of points
+        /// </summary>
+        /// <param name="vertices">The vertices of the polygon</param>
+        public Polygon(params float3[] vertices)
         {
             Vertices = vertices.ToList();
         }
@@ -28,24 +43,27 @@ namespace Sledge.Formats.Precision
         /// </summary>
         /// <param name="plane">The polygon plane</param>
         /// <param name="radius">The polygon radius</param>
-        public Polygon(Plane plane, double radius = 1000000d)
+        public Polygon(Plane plane, float radius = 4096f)
         {
             // Get aligned up and right axes to the plane
             var direction = plane.GetClosestAxisToNormal();
-            var tempV = direction == Vector3.UnitZ ? -Vector3.UnitY : -Vector3.UnitZ;
-            var up = tempV.Cross(plane.Normal).Normalise();
-            var right = plane.Normal.Cross(up).Normalise();
+            var up = direction.Equals(math.forward()) ? math.right() : -math.forward();
+            var v = up.Dot(plane.Normal);
+            up = (up + -v * plane.Normal).Normalise();
+            var right = up.Cross(plane.Normal);
 
-            var verts = new List<Vector3>
+            up *= radius;
+            right *= radius;
+
+            var origin = plane.GetPointOnPlane();
+            var verts = new List<float3>
             {
-                plane.PointOnPlane + right + up, // Top right
-                plane.PointOnPlane - right + up, // Top left
-                plane.PointOnPlane - right - up, // Bottom left
-                plane.PointOnPlane + right - up, // Bottom right
+                origin - right - up, // Bottom left
+                origin + right - up, // Bottom right
+                origin + right + up, // Top right
+                origin - right + up, // Top left
             };
-            
-            var origin = verts.Aggregate(Vector3.Zero, (x, y) => x + y) / verts.Count;
-            Vertices = verts.Select(x => (x - origin).Normalise() * radius + origin).ToList();
+            Vertices = verts.ToList();
         }
 
         public PlaneClassification ClassifyAgainstPlane(Plane p)
@@ -54,15 +72,15 @@ namespace Sledge.Formats.Precision
             var front = 0;
             var back = 0;
             var onplane = 0;
-
+            
             foreach (var t in Vertices)
             {
                 var test = p.OnPlane(t);
 
                 // Vertices on the plane are both in front and behind the plane in this context
-                if (test <= 0) back++;
-                if (test >= 0) front++;
-                if (test == 0) onplane++;
+                if (test == PlaneClassification.Back) back++;
+                if (test == PlaneClassification.Front) front++;
+                if (test == PlaneClassification.OnPlane) onplane++;
             }
 
             if (onplane == count) return PlaneClassification.OnPlane;
@@ -96,10 +114,11 @@ namespace Sledge.Formats.Precision
         /// <returns>True if the split was successful</returns>
         public bool Split(Plane clip, out Polygon back, out Polygon front, out Polygon coplanarBack, out Polygon coplanarFront)
         {
-            const double epsilon = 0.1d;
-            
-            var distances = Vertices.Select(clip.EvalAtPoint).ToList();
-            
+            const float epsilon = NumericsExtensions.Epsilon;
+
+            var clipd = new Planed(clip.Normal.Todouble3(), clip.Distance);
+            var distances = Vertices.Select(x => clipd.DotCoordinate(x.Todouble3())).ToList();
+
             int cb = 0, cf = 0;
             for (var i = 0; i < distances.Count; i++)
             {
@@ -133,35 +152,55 @@ namespace Sledge.Formats.Precision
             }
 
             // Get the new front and back vertices
-            var backVerts = new List<Vector3>();
-            var frontVerts = new List<Vector3>();
+            var backVerts = new List<float3>();
+            var frontVerts = new List<float3>();
 
             for (var i = 0; i < Vertices.Count; i++)
             {
                 var j = (i + 1) % Vertices.Count;
 
-                Vector3 s = Vertices[i], e = Vertices[j];
-                double sd = distances[i], ed = distances[j];
+                float3 s = Vertices[i], e = Vertices[j];
+                double sd = distances[i], ed = distances[j]; // using doubles here intentionally, for precision
 
                 if (sd <= 0) backVerts.Add(s);
                 if (sd >= 0) frontVerts.Add(s);
 
                 if ((sd < 0 && ed > 0) || (ed < 0 && sd > 0))
                 {
-                    double t = sd / (sd - ed);
-                    Vector3 intersect = s * (1 - t) + e * t;
+                    // this is really the only calculation where we need higher precision, so temporarily switch to doubles for this and then switch back
+                    var t = sd / (sd - ed);
+                    var intersectd = s.Todouble3() * (1 - t) + e.Todouble3() * t;
+                    var intersect = (float3)intersectd;
+
+                    // avoid round off error when possible
+                    // (if we know the clipping plane is a unit vector, then the intersection point on that axis will always be the plane's distance from the origin)
+                    if (clip.Normal.Equals(math.right())) intersect = new float3(-clip.Distance, intersect.y, intersect.z);
+                    else if (clip.Normal.Equals(-math.right())) intersect = new float3(clip.Distance, intersect.y, intersect.z);
+                    else if (clip.Normal.Equals(math.up())) intersect = new float3(intersect.x, -clip.Distance, intersect.z);
+                    else if (clip.Normal.Equals(-math.up())) intersect = new float3(intersect.x, clip.Distance, intersect.z);
+                    else if (clip.Normal.Equals(math.forward())) intersect = new float3(intersect.x, intersect.y, -clip.Distance);
+                    else if (clip.Normal.Equals(-math.forward())) intersect = new float3(intersect.x, intersect.y, clip.Distance);
 
                     backVerts.Add(intersect);
                     frontVerts.Add(intersect);
                 }
             }
-            
-            back = new Polygon(backVerts.Select(x => new Vector3(x.X, x.Y, x.Z)));
-            // front = new Polygon(frontVerts.Select(x => new Vector3(x.X, x.Y, x.Z)));
-            front = null; // we throw away the front, why bother
+
+            back = new Polygon(backVerts.Select(x => new float3(x.x, x.y, x.z)));
+            front = new Polygon(frontVerts.Select(x => new float3(x.x, x.y, x.z)));
             coplanarBack = coplanarFront = null;
 
             return true;
+        }
+
+        public Polygond ToPolygond()
+        {
+            return new Polygond(Vertices.Select(x => x.Todouble3()));
+        }
+
+        public Polygon Rounded(int num)
+        {
+            return new Polygon(Vertices.Select(x => x.Round(num)));
         }
     }
 }

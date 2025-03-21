@@ -1,23 +1,25 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using Unity.Mathematics;
+using Unity.Mathematics.Geometry;
 
-namespace Sledge.Formats.Precision
+namespace Junk.Sludge.Formats.Precision
 {
     /// <summary>
     /// Represents a coplanar, directed polygon with at least 3 vertices. Uses high-precision value types.
     /// </summary>
     public class Polygon
     {
-        public IReadOnlyList<Vector3> Vertices { get; }
+        public IReadOnlyList<float3> Vertices { get; }
 
         public Plane Plane => new Plane(Vertices[0], Vertices[1], Vertices[2]);
-        public Vector3 Origin => Vertices.Aggregate(Vector3.Zero, (x, y) => x + y) / Vertices.Count;
+        public float3 Origin => Vertices.Aggregate(float3.zero, (x, y) => x + y) / Vertices.Count;
 
         /// <summary>
         /// Creates a polygon from a list of points
         /// </summary>
         /// <param name="vertices">The vertices of the polygon</param>
-        public Polygon(IEnumerable<Vector3> vertices)
+        public Polygon(IEnumerable<float3> vertices)
         {
             Vertices = vertices.ToList();
         }
@@ -32,20 +34,23 @@ namespace Sledge.Formats.Precision
         {
             // Get aligned up and right axes to the plane
             var direction = plane.GetClosestAxisToNormal();
-            var tempV = direction == Vector3.UnitZ ? -Vector3.UnitY : -Vector3.UnitZ;
+            var tempV = direction.Equals(math.forward()) ? -math.up() : -math.forward();
             var up = tempV.Cross(plane.Normal).Normalise();
             var right = plane.Normal.Cross(up).Normalise();
+            
+            // Calculate a point on the plane (equivalent to PointOnPlane)
+            float3 pointOnPlane = plane.Normal * -plane.Distance;
 
-            var verts = new List<Vector3>
+            var verts = new List<float3>
             {
-                plane.PointOnPlane + right + up, // Top right
-                plane.PointOnPlane - right + up, // Top left
-                plane.PointOnPlane - right - up, // Bottom left
-                plane.PointOnPlane + right - up, // Bottom right
+                pointOnPlane + right + up, // Top right
+                pointOnPlane - right + up, // Top left
+                pointOnPlane - right - up, // Bottom left
+                pointOnPlane + right - up, // Bottom right
             };
             
-            var origin = verts.Aggregate(Vector3.Zero, (x, y) => x + y) / verts.Count;
-            Vertices = verts.Select(x => (x - origin).Normalise() * radius + origin).ToList();
+            var origin = verts.Aggregate(float3.zero, (x, y) => x + y) / verts.Count;
+            Vertices = verts.Select(x => math.normalizesafe(x - origin) * (float)radius + origin).ToList();
         }
 
         public PlaneClassification ClassifyAgainstPlane(Plane p)
@@ -96,9 +101,10 @@ namespace Sledge.Formats.Precision
         /// <returns>True if the split was successful</returns>
         public bool Split(Plane clip, out Polygon back, out Polygon front, out Polygon coplanarBack, out Polygon coplanarFront)
         {
-            const double epsilon = 0.1d;
+            const double epsilon   = 0.1d;
             
-            var distances = Vertices.Select(clip.EvalAtPoint).ToList();
+            //var          distances = Vertices.Select(clip.EvalAtPoint).ToList();
+            var          distances = Vertices.Select(v => clip.SignedDistanceToPoint(v)).ToList();
             
             int cb = 0, cf = 0;
             for (var i = 0; i < distances.Count; i++)
@@ -133,14 +139,14 @@ namespace Sledge.Formats.Precision
             }
 
             // Get the new front and back vertices
-            var backVerts = new List<Vector3>();
-            var frontVerts = new List<Vector3>();
+            var backVerts = new List<float3>();
+            var frontVerts = new List<float3>();
 
             for (var i = 0; i < Vertices.Count; i++)
             {
                 var j = (i + 1) % Vertices.Count;
 
-                Vector3 s = Vertices[i], e = Vertices[j];
+                float3 s = Vertices[i], e = Vertices[j];
                 double sd = distances[i], ed = distances[j];
 
                 if (sd <= 0) backVerts.Add(s);
@@ -148,16 +154,16 @@ namespace Sledge.Formats.Precision
 
                 if ((sd < 0 && ed > 0) || (ed < 0 && sd > 0))
                 {
-                    double t = sd / (sd - ed);
-                    Vector3 intersect = s * (1 - t) + e * t;
+                    double t         = sd / (sd - ed);
+                    float3 intersect = s * (1 - (float)t) + e * (float)t;
 
                     backVerts.Add(intersect);
                     frontVerts.Add(intersect);
                 }
             }
             
-            back = new Polygon(backVerts.Select(x => new Vector3(x.X, x.Y, x.Z)));
-            // front = new Polygon(frontVerts.Select(x => new Vector3(x.X, x.Y, x.Z)));
+            back = new Polygon(backVerts.Select(x => new float3(x.x, x.y, x.z)));
+            // front = new Polygon(frontVerts.Select(x => new float3(x.x, x.y, x.z)));
             front = null; // we throw away the front, why bother
             coplanarBack = coplanarFront = null;
 

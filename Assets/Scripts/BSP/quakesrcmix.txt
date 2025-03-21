@@ -1,0 +1,6421 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix. The content has been processed where security check has been disabled.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Security check has been disabled - content may contain sensitive information
+
+Additional Info:
+----------------
+
+================================================================
+Directory Structure
+================================================================
+builtin.c/
+  builtin.c
+cmdlib.c/
+  cmdlib.c
+cmdlib.h/
+  cmdlib.h
+COPYING/
+  COPYING
+makefile/
+  makefile
+pr_comp.c/
+  pr_comp.c
+pr_comp.h/
+  pr_comp.h
+pr_lex.c/
+  pr_lex.c
+progdefs.h/
+  progdefs.h
+qcc.c/
+  qcc.c
+qcc.h/
+  qcc.h
+readme.txt/
+  readme.txt
+
+================================================================
+Files
+================================================================
+
+================
+File: builtin.c/builtin.c
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+#include "quakedef.h"
+
+#define	RETURN_EDICT(e) (((int *)pr_globals)[OFS_RETURN] = EDICT_TO_PROG(e))
+
+/*
+===============================================================================
+
+						BUILT-IN FUNCTIONS
+
+===============================================================================
+*/
+
+char *PF_VarString (int	first)
+{
+	int		i;
+	static char out[256];
+	
+	out[0] = 0;
+	for (i=first ; i<pr_argc ; i++)
+	{
+		strcat (out, G_STRING((OFS_PARM0+i*3)));
+	}
+	return out;
+}
+
+
+/*
+=================
+PF_errror
+
+This is a TERMINAL error, which will kill off the entire server.
+Dumps self.
+
+error(value)
+=================
+*/
+void PF_error (void)
+{
+	char	*s;
+	edict_t	*ed;
+	
+	s = PF_VarString(0);
+	Con_Printf ("======SERVER ERROR in %s:\n%s\n"
+	,pr_strings + pr_xfunction->s_name,s);
+	ed = PROG_TO_EDICT(pr_global_struct->self);
+	ED_Print (ed);
+
+	Host_Error ("Program error");
+}
+
+/*
+=================
+PF_objerror
+
+Dumps out self, then an error message.  The program is aborted and self is
+removed, but the level can continue.
+
+objerror(value)
+=================
+*/
+void PF_objerror (void)
+{
+	char	*s;
+	edict_t	*ed;
+	
+	s = PF_VarString(0);
+	Con_Printf ("======OBJECT ERROR in %s:\n%s\n"
+	,pr_strings + pr_xfunction->s_name,s);
+	ed = PROG_TO_EDICT(pr_global_struct->self);
+	ED_Print (ed);
+	ED_Free (ed);
+	
+	Host_Error ("Program error");
+}
+
+
+
+/*
+==============
+PF_makevectors
+
+Writes new values for v_forward, v_up, and v_right based on angles
+makevectors(vector)
+==============
+*/
+void PF_makevectors (void)
+{
+	AngleVectors (G_VECTOR(OFS_PARM0), pr_global_struct->v_forward, pr_global_struct->v_right, pr_global_struct->v_up);
+}
+
+/*
+=================
+PF_setorigin
+
+This is the only valid way to move an object without using the physics of the world (setting velocity and waiting).  Directly changing origin will not set internal links correctly, so clipping would be messed up.  This should be called when an object is spawned, and then only if it is teleported.
+
+setorigin (entity, origin)
+=================
+*/
+void PF_setorigin (void)
+{
+	edict_t	*e;
+	float	*org;
+	
+	e = G_EDICT(OFS_PARM0);
+	org = G_VECTOR(OFS_PARM1);
+	VectorCopy (org, e->v.origin);
+	SV_LinkEdict (e, false);
+}
+
+
+void SetMinMaxSize (edict_t *e, float *min, float *max, qboolean rotate)
+{
+	float	*angles;
+	vec3_t	rmin, rmax;
+	float	bounds[2][3];
+	float	xvector[2], yvector[2];
+	float	a;
+	vec3_t	base, transformed;
+	int		i, j, k, l;
+	
+	for (i=0 ; i<3 ; i++)
+		if (min[i] > max[i])
+			PR_RunError ("backwards mins/maxs");
+
+	rotate = false;		// FIXME: implement rotation properly again
+
+	if (!rotate)
+	{
+		VectorCopy (min, rmin);
+		VectorCopy (max, rmax);
+	}
+	else
+	{
+	// find min / max for rotations
+		angles = e->v.angles;
+		
+		a = angles[1]/180 * M_PI;
+		
+		xvector[0] = cos(a);
+		xvector[1] = sin(a);
+		yvector[0] = -sin(a);
+		yvector[1] = cos(a);
+		
+		VectorCopy (min, bounds[0]);
+		VectorCopy (max, bounds[1]);
+		
+		rmin[0] = rmin[1] = rmin[2] = 9999;
+		rmax[0] = rmax[1] = rmax[2] = -9999;
+		
+		for (i=0 ; i<= 1 ; i++)
+		{
+			base[0] = bounds[i][0];
+			for (j=0 ; j<= 1 ; j++)
+			{
+				base[1] = bounds[j][1];
+				for (k=0 ; k<= 1 ; k++)
+				{
+					base[2] = bounds[k][2];
+					
+				// transform the point
+					transformed[0] = xvector[0]*base[0] + yvector[0]*base[1];
+					transformed[1] = xvector[1]*base[0] + yvector[1]*base[1];
+					transformed[2] = base[2];
+					
+					for (l=0 ; l<3 ; l++)
+					{
+						if (transformed[l] < rmin[l])
+							rmin[l] = transformed[l];
+						if (transformed[l] > rmax[l])
+							rmax[l] = transformed[l];
+					}
+				}
+			}
+		}
+	}
+	
+// set derived values
+	VectorCopy (rmin, e->v.mins);
+	VectorCopy (rmax, e->v.maxs);
+	VectorSubtract (max, min, e->v.size);
+	
+	SV_LinkEdict (e, false);
+}
+
+/*
+=================
+PF_setsize
+
+the size box is rotated by the current angle
+
+setsize (entity, minvector, maxvector)
+=================
+*/
+void PF_setsize (void)
+{
+	edict_t	*e;
+	float	*min, *max;
+	
+	e = G_EDICT(OFS_PARM0);
+	min = G_VECTOR(OFS_PARM1);
+	max = G_VECTOR(OFS_PARM2);
+	SetMinMaxSize (e, min, max, false);
+}
+
+
+/*
+=================
+PF_setmodel
+
+setmodel(entity, model)
+=================
+*/
+void PF_setmodel (void)
+{
+	edict_t	*e;
+	char	*m, **check;
+	model_t	*mod;
+	int		i;
+
+	e = G_EDICT(OFS_PARM0);
+	m = G_STRING(OFS_PARM1);
+
+// check to see if model was properly precached
+	for (i=0, check = sv.model_precache ; *check ; i++, check++)
+		if (!strcmp(*check, m))
+			break;
+			
+	if (!*check)
+		PR_RunError ("no precache: %s\n", m);
+		
+
+	e->v.model = m - pr_strings;
+	e->v.modelindex = i; //SV_ModelIndex (m);
+
+	mod = sv.models[ (int)e->v.modelindex];  // Mod_ForName (m, true);
+	
+	if (mod)
+		SetMinMaxSize (e, mod->mins, mod->maxs, true);
+	else
+		SetMinMaxSize (e, vec3_origin, vec3_origin, true);
+}
+
+/*
+=================
+PF_bprint
+
+broadcast print to everyone on server
+
+bprint(value)
+=================
+*/
+void PF_bprint (void)
+{
+	char		*s;
+
+	s = PF_VarString(0);
+	SV_BroadcastPrintf (s);
+}
+
+/*
+=================
+PF_sprint
+
+single print to a specific client
+
+sprint(clientent, value)
+=================
+*/
+void PF_sprint (void)
+{
+	char		*s;
+	client_t	*client;
+	int			entnum;
+	
+	entnum = G_EDICTNUM(OFS_PARM0);
+	s = PF_VarString(1);
+	
+	if (entnum < 1 || entnum > svs.maxclients)
+	{
+		Con_Printf ("tried to sprint to a non-client\n");
+		return;
+	}
+		
+	client = &svs.clients[entnum-1];
+		
+	MSG_WriteChar (&client->message,svc_print);
+	MSG_WriteString (&client->message, s );
+}
+
+
+/*
+=================
+PF_centerprint
+
+single print to a specific client
+
+centerprint(clientent, value)
+=================
+*/
+void PF_centerprint (void)
+{
+	char		*s;
+	client_t	*client;
+	int			entnum;
+	
+	entnum = G_EDICTNUM(OFS_PARM0);
+	s = PF_VarString(1);
+	
+	if (entnum < 1 || entnum > svs.maxclients)
+	{
+		Con_Printf ("tried to sprint to a non-client\n");
+		return;
+	}
+		
+	client = &svs.clients[entnum-1];
+		
+	MSG_WriteChar (&client->message,svc_centerprint);
+	MSG_WriteString (&client->message, s );
+}
+
+
+/*
+=================
+PF_normalize
+
+vector normalize(vector)
+=================
+*/
+void PF_normalize (void)
+{
+	float	*value1;
+	vec3_t	newvalue;
+	float	new;
+	
+	value1 = G_VECTOR(OFS_PARM0);
+
+	new = value1[0] * value1[0] + value1[1] * value1[1] + value1[2]*value1[2];
+	new = sqrt(new);
+	
+	if (new == 0)
+		newvalue[0] = newvalue[1] = newvalue[2] = 0;
+	else
+	{
+		new = 1/new;
+		newvalue[0] = value1[0] * new;
+		newvalue[1] = value1[1] * new;
+		newvalue[2] = value1[2] * new;
+	}
+	
+	VectorCopy (newvalue, G_VECTOR(OFS_RETURN));	
+}
+
+/*
+=================
+PF_vlen
+
+scalar vlen(vector)
+=================
+*/
+void PF_vlen (void)
+{
+	float	*value1;
+	float	new;
+	
+	value1 = G_VECTOR(OFS_PARM0);
+
+	new = value1[0] * value1[0] + value1[1] * value1[1] + value1[2]*value1[2];
+	new = sqrt(new);
+	
+	G_FLOAT(OFS_RETURN) = new;
+}
+
+/*
+=================
+PF_vectoyaw
+
+float vectoyaw(vector)
+=================
+*/
+void PF_vectoyaw (void)
+{
+	float	*value1;
+	float	yaw;
+	
+	value1 = G_VECTOR(OFS_PARM0);
+
+	if (value1[1] == 0 && value1[0] == 0)
+		yaw = 0;
+	else
+	{
+		yaw = (int) (atan2(value1[1], value1[0]) * 180 / M_PI);
+		if (yaw < 0)
+			yaw += 360;
+	}
+
+	G_FLOAT(OFS_RETURN) = yaw;
+}
+
+
+/*
+=================
+PF_vectoangles
+
+vector vectoangles(vector)
+=================
+*/
+void PF_vectoangles (void)
+{
+	float	*value1;
+	float	forward;
+	float	yaw, pitch;
+	
+	value1 = G_VECTOR(OFS_PARM0);
+
+	if (value1[1] == 0 && value1[0] == 0)
+	{
+		yaw = 0;
+		if (value1[2] > 0)
+			pitch = 90;
+		else
+			pitch = 270;
+	}
+	else
+	{
+		yaw = (int) (atan2(value1[1], value1[0]) * 180 / M_PI);
+		if (yaw < 0)
+			yaw += 360;
+
+		forward = sqrt (value1[0]*value1[0] + value1[1]*value1[1]);
+		pitch = (int) (atan2(value1[2], forward) * 180 / M_PI);
+		if (pitch < 0)
+			pitch += 360;
+	}
+
+	G_FLOAT(OFS_RETURN+0) = pitch;
+	G_FLOAT(OFS_RETURN+1) = yaw;
+	G_FLOAT(OFS_RETURN+2) = 0;
+}
+
+/*
+=================
+PF_Random
+
+Returns a number from 0<= num < 1
+
+random()
+=================
+*/
+void PF_random (void)
+{
+	float		num;
+		
+	num = (rand ()&0x7fff) / ((float)0x7fff);
+	
+	G_FLOAT(OFS_RETURN) = num;
+}
+
+/*
+=================
+PF_particle
+
+particle(origin, color, count)
+=================
+*/
+void PF_particle (void)
+{
+	float		*org, *dir;
+	float		color;
+	float		count;
+			
+	org = G_VECTOR(OFS_PARM0);
+	dir = G_VECTOR(OFS_PARM1);
+	color = G_FLOAT(OFS_PARM2);
+	count = G_FLOAT(OFS_PARM3);
+	SV_StartParticle (org, dir, color, count);
+}
+
+
+/*
+=================
+PF_ambientsound
+
+=================
+*/
+void PF_ambientsound (void)
+{
+	char		**check;
+	char		*samp;
+	float		*pos;
+	float 		vol, attenuation;
+	int			i, soundnum;
+
+	pos = G_VECTOR (OFS_PARM0);			
+	samp = G_STRING(OFS_PARM1);
+	vol = G_FLOAT(OFS_PARM2);
+	attenuation = G_FLOAT(OFS_PARM3);
+	
+// check to see if samp was properly precached
+	for (soundnum=0, check = sv.sound_precache ; *check ; check++, soundnum++)
+		if (!strcmp(*check,samp))
+			break;
+			
+	if (!*check)
+	{
+		Con_Printf ("no precache: %s\n", samp);
+		return;
+	}
+
+// add an svc_spawnambient command to the level signon packet
+
+	MSG_WriteByte (&sv.signon,svc_spawnstaticsound);
+	for (i=0 ; i<3 ; i++)
+		MSG_WriteCoord(&sv.signon, pos[i]);
+
+	MSG_WriteByte (&sv.signon, soundnum);
+
+	MSG_WriteByte (&sv.signon, vol*255);
+	MSG_WriteByte (&sv.signon, attenuation*64);
+
+}
+
+/*
+=================
+PF_sound
+
+Each entity can have eight independant sound sources, like voice,
+weapon, feet, etc.
+
+Channel 0 is an auto-allocate channel, the others override anything
+allready running on that entity/channel pair.
+
+An attenuation of 0 will play full volume everywhere in the level.
+Larger attenuations will drop off.
+
+=================
+*/
+void PF_sound (void)
+{
+	char		*sample;
+	int			channel;
+	edict_t		*entity;
+	int 		volume;
+	float attenuation;
+		
+	entity = G_EDICT(OFS_PARM0);
+	channel = G_FLOAT(OFS_PARM1);
+	sample = G_STRING(OFS_PARM2);
+	volume = G_FLOAT(OFS_PARM3) * 255;
+	attenuation = G_FLOAT(OFS_PARM4);
+	
+	if (volume < 0 || volume > 255)
+		Sys_Error ("SV_StartSound: volume = %i", volume);
+
+	if (attenuation < 0 || attenuation > 4)
+		Sys_Error ("SV_StartSound: attenuation = %f", attenuation);
+
+	if (channel < 0 || channel > 7)
+		Sys_Error ("SV_StartSound: channel = %i", channel);
+
+	SV_StartSound (entity, channel, sample, volume, attenuation);
+}
+
+/*
+=================
+PF_break
+
+break()
+=================
+*/
+void PF_break (void)
+{
+Con_Printf ("break statement\n");
+*(int *)-4 = 0;	// dump to debugger
+//	PR_RunError ("break statement");
+}
+
+/*
+=================
+PF_traceline
+
+Used for use tracing and shot targeting
+Traces are blocked by bbox and exact bsp entityes, and also slide box entities
+if the tryents flag is set.
+
+traceline (vector1, vector2, tryents)
+=================
+*/
+void PF_traceline (void)
+{
+	float	*v1, *v2;
+	trace_t	trace;
+	int		nomonsters;
+	edict_t	*ent;
+
+	v1 = G_VECTOR(OFS_PARM0);
+	v2 = G_VECTOR(OFS_PARM1);
+	nomonsters = G_FLOAT(OFS_PARM2);
+	ent = G_EDICT(OFS_PARM3);
+
+	trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
+
+	pr_global_struct->trace_allsolid = trace.allsolid;
+	pr_global_struct->trace_startsolid = trace.startsolid;
+	pr_global_struct->trace_fraction = trace.fraction;
+	pr_global_struct->trace_inwater = trace.inwater;
+	pr_global_struct->trace_inopen = trace.inopen;
+	VectorCopy (trace.endpos, pr_global_struct->trace_endpos);
+	VectorCopy (trace.plane.normal, pr_global_struct->trace_plane_normal);
+	pr_global_struct->trace_plane_dist =  trace.plane.dist;	
+	if (trace.ent)
+		pr_global_struct->trace_ent = EDICT_TO_PROG(trace.ent);
+	else
+		pr_global_struct->trace_ent = EDICT_TO_PROG(sv.edicts);
+}
+
+/*
+=================
+PF_checkpos
+
+Returns true if the given entity can move to the given position from it's
+current position by walking or rolling.
+FIXME: make work...
+scalar checkpos (entity, vector)
+=================
+*/
+void PF_checkpos (void)
+{
+}
+
+//============================================================================
+
+byte	checkpvs[MAX_MAP_LEAFS/8];
+
+int PF_newcheckclient (int check)
+{
+	int		i;
+	byte	*pvs;
+	edict_t	*ent;
+	mleaf_t	*leaf;
+	vec3_t	org;
+
+// cycle to the next one
+
+	if (check < 1)
+		check = 1;
+	if (check > svs.maxclients)
+		check = svs.maxclients;
+
+	if (check == svs.maxclients)
+		i = 1;
+	else
+		i = check + 1;
+
+	for ( ;  ; i++)
+	{
+		if (i == svs.maxclients+1)
+			i = 1;
+
+		ent = EDICT_NUM(i);
+
+		if (i == check)
+			break;	// didn't find anything else
+
+		if (ent->free)
+			continue;
+		if (ent->v.health <= 0)
+			continue;
+		if ((int)ent->v.flags & FL_NOTARGET)
+			continue;
+
+	// anything that is a client, or has a client as an enemy
+		break;
+	}
+
+// get the PVS for the entity
+	VectorAdd (ent->v.origin, ent->v.view_ofs, org);
+	leaf = Mod_PointInLeaf (org, sv.worldmodel);
+	pvs = Mod_LeafPVS (leaf, sv.worldmodel);
+	memcpy (checkpvs, pvs, (sv.worldmodel->numleafs+7)>>3 );
+
+	return i;
+}
+
+/*
+=================
+PF_checkclient
+
+Returns a client (or object that has a client enemy) that would be a
+valid target.
+
+If there are more than one valid options, they are cycled each frame
+
+If (self.origin + self.viewofs) is not in the PVS of the current target,
+it is not returned at all.
+
+name checkclient ()
+=================
+*/
+#define	MAX_CHECK	16
+int c_invis, c_notvis;
+void PF_checkclient (void)
+{
+	edict_t	*ent, *self;
+	mleaf_t	*leaf;
+	int		l;
+	vec3_t	view;
+	
+// find a new check if on a new frame
+	if (sv.time - sv.lastchecktime >= 0.1)
+	{
+		sv.lastcheck = PF_newcheckclient (sv.lastcheck);
+		sv.lastchecktime = sv.time;
+	}
+
+// return check if it might be visible	
+	ent = EDICT_NUM(sv.lastcheck);
+	if (ent->free || ent->v.health <= 0)
+	{
+		RETURN_EDICT(sv.edicts);
+		return;
+	}
+
+// if current entity can't possibly see the check entity, return 0
+	self = PROG_TO_EDICT(pr_global_struct->self);
+	VectorAdd (self->v.origin, self->v.view_ofs, view);
+	leaf = Mod_PointInLeaf (view, sv.worldmodel);
+	l = (leaf - sv.worldmodel->leafs) - 1;
+	if ( (l<0) || !(checkpvs[l>>3] & (1<<(l&7)) ) )
+	{
+c_notvis++;
+		RETURN_EDICT(sv.edicts);
+		return;
+	}
+
+// might be able to see it
+c_invis++;
+	RETURN_EDICT(ent);
+}
+
+//============================================================================
+
+
+/*
+=================
+PF_stuffcmd
+
+Sends text over to the client's execution buffer
+
+stuffcmd (clientent, value)
+=================
+*/
+void PF_stuffcmd (void)
+{
+	int		entnum;
+	char	*str;
+	client_t	*old;
+	
+	entnum = G_EDICTNUM(OFS_PARM0);
+	if (entnum < 1 || entnum > svs.maxclients)
+		PR_RunError ("Parm 0 not a client");
+	str = G_STRING(OFS_PARM1);	
+	
+	old = host_client;
+	host_client = &svs.clients[entnum-1];
+	Host_ClientCommands ("%s", str);
+	host_client = old;
+}
+
+/*
+=================
+PF_localcmd
+
+Sends text over to the client's execution buffer
+
+localcmd (string)
+=================
+*/
+void PF_localcmd (void)
+{
+	char	*str;
+	
+	str = G_STRING(OFS_PARM0);	
+	Cbuf_AddText (str);
+}
+
+/*
+=================
+PF_cvar
+
+float cvar (string)
+=================
+*/
+void PF_cvar (void)
+{
+	char	*str;
+	
+	str = G_STRING(OFS_PARM0);
+	
+	G_FLOAT(OFS_RETURN) = Cvar_VariableValue (str);
+}
+
+/*
+=================
+PF_cvar_set
+
+float cvar (string)
+=================
+*/
+void PF_cvar_set (void)
+{
+	char	*var, *val;
+	
+	var = G_STRING(OFS_PARM0);
+	val = G_STRING(OFS_PARM1);
+	
+	Cvar_Set (var, val);
+}
+
+/*
+=================
+PF_findradius
+
+Returns a chain of entities that have origins within a spherical area
+
+findradius (origin, radius)
+=================
+*/
+void PF_findradius (void)
+{
+	edict_t	*ent, *chain;
+	float	rad;
+	float	*org;
+	vec3_t	eorg;
+	int		i, j;
+
+	chain = (edict_t *)sv.edicts;
+	
+	org = G_VECTOR(OFS_PARM0);
+	rad = G_FLOAT(OFS_PARM1);
+
+	ent = NEXT_EDICT(sv.edicts);
+	for (i=1 ; i<sv.num_edicts ; i++, ent = NEXT_EDICT(ent))
+	{
+		if (ent->free)
+			continue;
+		if (ent->v.solid == SOLID_NOT)
+			continue;
+		for (j=0 ; j<3 ; j++)
+			eorg[j] = org[j] - (ent->v.origin[j] + (ent->v.mins[j] + ent->v.maxs[j])*0.5);			
+		if (Length(eorg) > rad)
+			continue;
+			
+		ent->v.chain = EDICT_TO_PROG(chain);
+		chain = ent;
+	}
+
+	RETURN_EDICT(chain);
+}
+
+
+/*
+=========
+PF_dprint
+=========
+*/
+void PF_dprint (void)
+{
+	Con_Printf ("%s",PF_VarString(0));
+}
+
+char	pr_string_temp[128];
+
+void PF_ftos (void)
+{
+	float	v;
+	v = G_FLOAT(OFS_PARM0);
+	
+	if (v == (int)v)
+		sprintf (pr_string_temp, "%d",(int)v);
+	else
+		sprintf (pr_string_temp, "%5.1f",v);
+	G_INT(OFS_RETURN) = pr_string_temp - pr_strings;
+}
+
+void PF_fabs (void)
+{
+	float	v;
+	v = G_FLOAT(OFS_PARM0);
+	G_FLOAT(OFS_RETURN) = fabs(v);
+}
+
+void PF_vtos (void)
+{
+	sprintf (pr_string_temp, "'%5.1f %5.1f %5.1f'", G_VECTOR(OFS_PARM0)[0], G_VECTOR(OFS_PARM0)[1], G_VECTOR(OFS_PARM0)[2]);
+	G_INT(OFS_RETURN) = pr_string_temp - pr_strings;
+}
+
+void PF_Spawn (void)
+{
+	edict_t	*ed;
+	ed = ED_Alloc();
+	RETURN_EDICT(ed);
+}
+
+void PF_Remove (void)
+{
+	edict_t	*ed;
+	
+	ed = G_EDICT(OFS_PARM0);
+	ED_Free (ed);
+}
+
+
+// entity (entity start, .string field, string match) find = #5;
+void PF_Find (void)
+{
+	int		e;	
+	int		f;
+	char	*s, *t;
+	edict_t	*ed;
+	
+	e = G_EDICTNUM(OFS_PARM0);
+	f = G_INT(OFS_PARM1);
+	s = G_STRING(OFS_PARM2);
+	if (!s)
+		PR_RunError ("PF_Find: bad search string");
+		
+	for (e++ ; e < sv.num_edicts ; e++)
+	{
+		ed = EDICT_NUM(e);
+		if (ed->free)
+			continue;
+		t = E_STRING(ed,f);
+		if (!t)
+			continue;
+		if (!strcmp(t,s))
+		{
+			RETURN_EDICT(ed);
+			return;
+		}
+	}
+	
+	RETURN_EDICT(sv.edicts);
+}
+
+void PR_CheckEmptyString (char *s)
+{
+	if (s[0] <= ' ')
+		PR_RunError ("Bad string");
+}
+
+void PF_precache_file (void)
+{	// precache_file is only used to copy files with qcc, it does nothing
+	G_INT(OFS_RETURN) = G_INT(OFS_PARM0);
+}
+
+void PF_precache_sound (void)
+{
+	char	*s;
+	int		i;
+	
+	if (sv.state != ss_loading)
+		PR_RunError ("PF_Precache_*: Precache can only be done in spawn functions");
+		
+	s = G_STRING(OFS_PARM0);
+	G_INT(OFS_RETURN) = G_INT(OFS_PARM0);
+	PR_CheckEmptyString (s);
+	
+	for (i=0 ; i<MAX_SOUNDS ; i++)
+	{
+		if (!sv.sound_precache[i])
+		{
+			sv.sound_precache[i] = s;
+			return;
+		}
+		if (!strcmp(sv.sound_precache[i], s))
+			return;
+	}
+	PR_RunError ("PF_precache_sound: overflow");
+}
+
+void PF_precache_model (void)
+{
+	char	*s;
+	int		i;
+	
+	if (sv.state != ss_loading)
+		PR_RunError ("PF_Precache_*: Precache can only be done in spawn functions");
+		
+	s = G_STRING(OFS_PARM0);
+	G_INT(OFS_RETURN) = G_INT(OFS_PARM0);
+	PR_CheckEmptyString (s);
+
+	for (i=0 ; i<MAX_MODELS ; i++)
+	{
+		if (!sv.model_precache[i])
+		{
+			sv.model_precache[i] = s;
+			sv.models[i] = Mod_ForName (s, true);
+			return;
+		}
+		if (!strcmp(sv.model_precache[i], s))
+			return;
+	}
+	PR_RunError ("PF_precache_model: overflow");
+}
+
+
+void PF_coredump (void)
+{
+	ED_PrintEdicts ();
+}
+
+void PF_traceon (void)
+{
+	pr_trace = true;
+}
+
+void PF_traceoff (void)
+{
+	pr_trace = false;
+}
+
+void PF_eprint (void)
+{
+	ED_PrintNum (G_EDICTNUM(OFS_PARM0));
+}
+
+/*
+===============
+PF_walkmove
+
+float(float yaw, float dist) walkmove
+===============
+*/
+void PF_walkmove (void)
+{
+	edict_t	*ent;
+	float	yaw, dist;
+	vec3_t	move;
+	dfunction_t	*oldf;
+	int 	oldself;
+	
+	ent = PROG_TO_EDICT(pr_global_struct->self);
+	yaw = G_FLOAT(OFS_PARM0);
+	dist = G_FLOAT(OFS_PARM1);
+	
+	if ( !( (int)ent->v.flags & (FL_ONGROUND|FL_FLY|FL_SWIM) ) )
+	{
+		G_FLOAT(OFS_RETURN) = 0;
+		return;
+	}
+
+	yaw = yaw*M_PI*2 / 360;
+	
+	move[0] = cos(yaw)*dist;
+	move[1] = sin(yaw)*dist;
+	move[2] = 0;
+
+// save program state, because SV_movestep may call other progs
+	oldf = pr_xfunction;
+	oldself = pr_global_struct->self;
+	
+	G_FLOAT(OFS_RETURN) = SV_movestep(ent, move, true);
+	
+	
+// restore program state
+	pr_xfunction = oldf;
+	pr_global_struct->self = oldself;
+}
+
+/*
+===============
+PF_droptofloor
+
+void() droptofloor
+===============
+*/
+void PF_droptofloor (void)
+{
+	edict_t		*ent;
+	vec3_t		end;
+	trace_t		trace;
+	
+	ent = PROG_TO_EDICT(pr_global_struct->self);
+
+	VectorCopy (ent->v.origin, end);
+	end[2] -= 256;
+	
+	trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, end, false, ent);
+
+	if (trace.fraction == 1 || trace.allsolid)
+		G_FLOAT(OFS_RETURN) = 0;
+	else
+	{
+		VectorCopy (trace.endpos, ent->v.origin);
+		SV_LinkEdict (ent, false);
+		ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+		ent->v.groundentity = EDICT_TO_PROG(trace.ent);
+		G_FLOAT(OFS_RETURN) = 1;
+	}
+}
+
+/*
+===============
+PF_lightstyle
+
+void(float style, string value) lightstyle
+===============
+*/
+void PF_lightstyle (void)
+{
+	int		style;
+	char	*val;
+	client_t	*client;
+	int			j;
+	
+	style = G_FLOAT(OFS_PARM0);
+	val = G_STRING(OFS_PARM1);
+
+// change the string in sv
+	sv.lightstyles[style] = val;
+	
+// send message to all clients on this server
+	if (sv.state != ss_active)
+		return;
+	
+	for (j=0, client = svs.clients ; j<svs.maxclients ; j++, client++)
+		if (client->active || client->spawned)
+		{
+			MSG_WriteChar (&client->message, svc_lightstyle);
+			MSG_WriteChar (&client->message,style);
+			MSG_WriteString (&client->message, val);
+		}
+}
+
+void PF_rint (void)
+{
+	float	f;
+	f = G_FLOAT(OFS_PARM0);
+	if (f > 0)
+		G_FLOAT(OFS_RETURN) = (int)(f + 0.5);
+	else
+		G_FLOAT(OFS_RETURN) = (int)(f - 0.5);
+}
+void PF_floor (void)
+{
+	G_FLOAT(OFS_RETURN) = floor(G_FLOAT(OFS_PARM0));
+}
+void PF_ceil (void)
+{
+	G_FLOAT(OFS_RETURN) = ceil(G_FLOAT(OFS_PARM0));
+}
+
+
+/*
+=============
+PF_checkbottom
+=============
+*/
+void PF_checkbottom (void)
+{
+	edict_t	*ent;
+	
+	ent = G_EDICT(OFS_PARM0);
+
+	G_FLOAT(OFS_RETURN) = SV_CheckBottom (ent);
+}
+
+/*
+=============
+PF_pointcontents
+=============
+*/
+void PF_pointcontents (void)
+{
+	float	*v;
+	
+	v = G_VECTOR(OFS_PARM0);
+
+	G_FLOAT(OFS_RETURN) = SV_PointContents (v);	
+}
+
+/*
+=============
+PF_nextent
+
+entity nextent(entity)
+=============
+*/
+void PF_nextent (void)
+{
+	int		i;
+	edict_t	*ent;
+	
+	i = G_EDICTNUM(OFS_PARM0);
+	while (1)
+	{
+		i++;
+		if (i == sv.num_edicts)
+		{
+			RETURN_EDICT(sv.edicts);
+			return;
+		}
+		ent = EDICT_NUM(i);
+		if (!ent->free)
+		{
+			RETURN_EDICT(ent);
+			return;
+		}
+	}
+}
+
+/*
+=============
+PF_aim
+
+Pick a vector for the player to shoot along
+vector aim(entity, missilespeed)
+=============
+*/
+cvar_t	sv_aim = {"sv_aim", "0.93"};
+void PF_aim (void)
+{
+	edict_t	*ent, *check, *bestent;
+	vec3_t	start, dir, end, bestdir;
+	int		i, j;
+	trace_t	tr;
+	float	dist, bestdist;
+	float	speed;
+	
+	ent = G_EDICT(OFS_PARM0);
+	speed = G_FLOAT(OFS_PARM1);
+
+	VectorCopy (ent->v.origin, start);
+	start[2] += 20;
+
+// try sending a trace straight
+	VectorCopy (pr_global_struct->v_forward, dir);
+	VectorMA (start, 2048, dir, end);
+	tr = SV_Move (start, vec3_origin, vec3_origin, end, false, ent);
+	if (tr.ent && tr.ent->v.takedamage == DAMAGE_AIM
+	&& (!teamplay.value || ent->v.team <=0 || ent->v.team != tr.ent->v.team) )
+	{
+		VectorCopy (pr_global_struct->v_forward, G_VECTOR(OFS_RETURN));
+		return;
+	}
+
+
+// try all possible entities
+	VectorCopy (dir, bestdir);
+	bestdist = sv_aim.value;
+	bestent = NULL;
+	
+	check = NEXT_EDICT(sv.edicts);
+	for (i=1 ; i<sv.num_edicts ; i++, check = NEXT_EDICT(check) )
+	{
+		if (check->v.takedamage != DAMAGE_AIM)
+			continue;
+		if (check == ent)
+			continue;
+		if (teamplay.value && ent->v.team > 0 && ent->v.team == check->v.team)
+			continue;	// don't aim at teammate
+		for (j=0 ; j<3 ; j++)
+			end[j] = check->v.origin[j]
+			+ 0.5*(check->v.mins[j] + check->v.maxs[j]);
+		VectorSubtract (end, start, dir);
+		VectorNormalize (dir);
+		dist = DotProduct (dir, pr_global_struct->v_forward);
+		if (dist < bestdist)
+			continue;	// to far to turn
+		tr = SV_Move (start, vec3_origin, vec3_origin, end, false, ent);
+		if (tr.ent == check)
+		{	// can shoot at this one
+			bestdist = dist;
+			bestent = check;
+		}
+	}
+	
+	if (bestent)
+	{
+		VectorSubtract (bestent->v.origin, ent->v.origin, dir);
+		dist = DotProduct (dir, pr_global_struct->v_forward);
+		VectorScale (pr_global_struct->v_forward, dist, end);
+		end[2] = dir[2];
+		VectorNormalize (end);
+		VectorCopy (end, G_VECTOR(OFS_RETURN));	
+	}
+	else
+	{
+		VectorCopy (bestdir, G_VECTOR(OFS_RETURN));
+	}
+}
+
+/*
+==============
+PF_changeyaw
+
+This was a major timewaster in progs, so it was converted to C
+==============
+*/
+void PF_changeyaw (void)
+{
+	edict_t		*ent;
+	float		ideal, current, move, speed;
+	
+	ent = PROG_TO_EDICT(pr_global_struct->self);
+	current = anglemod( ent->v.angles[1] );
+	ideal = ent->v.ideal_yaw;
+	speed = ent->v.yaw_speed;
+	
+	if (current == ideal)
+		return;
+	move = ideal - current;
+	if (ideal > current)
+	{
+		if (move >= 180)
+			move = move - 360;
+	}
+	else
+	{
+		if (move <= -180)
+			move = move + 360;
+	}
+	if (move > 0)
+	{
+		if (move > speed)
+			move = speed;
+	}
+	else
+	{
+		if (move < -speed)
+			move = -speed;
+	}
+	
+	ent->v.angles[1] = anglemod (current + move);
+}
+
+/*
+===============================================================================
+
+MESSAGE WRITING
+
+===============================================================================
+*/
+
+#define	MSG_BROADCAST	0		// unreliable to all
+#define	MSG_ONE			1		// reliable to one (msg_entity)
+#define	MSG_ALL			2		// reliable to all
+#define	MSG_INIT		3		// write to the init string
+
+sizebuf_t *WriteDest (void)
+{
+	int		entnum;
+	int		dest;
+	edict_t	*ent;
+
+	dest = G_FLOAT(OFS_PARM0);
+	switch (dest)
+	{
+	case MSG_BROADCAST:
+		return &sv.datagram;
+	
+	case MSG_ONE:
+		ent = PROG_TO_EDICT(pr_global_struct->msg_entity);
+		entnum = NUM_FOR_EDICT(ent);
+		if (entnum < 1 || entnum > svs.maxclients)
+			PR_RunError ("WriteDest: not a client");
+		return &svs.clients[entnum-1].message;
+		
+	case MSG_ALL:
+		return &sv.reliable_datagram;
+	
+	case MSG_INIT:
+		return &sv.signon;
+
+	default:
+		PR_RunError ("WriteDest: bad destination");
+		break;
+	}
+	
+	return NULL;
+}
+
+void PF_WriteByte (void)
+{
+	MSG_WriteByte (WriteDest(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_WriteChar (void)
+{
+	MSG_WriteChar (WriteDest(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_WriteShort (void)
+{
+	MSG_WriteShort (WriteDest(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_WriteLong (void)
+{
+	MSG_WriteLong (WriteDest(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_WriteAngle (void)
+{
+	MSG_WriteAngle (WriteDest(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_WriteCoord (void)
+{
+	MSG_WriteCoord (WriteDest(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_WriteString (void)
+{
+	MSG_WriteString (WriteDest(), G_STRING(OFS_PARM1));
+}
+
+
+void PF_WriteEntity (void)
+{
+	MSG_WriteShort (WriteDest(), G_EDICTNUM(OFS_PARM1));
+}
+
+//=============================================================================
+
+int SV_ModelIndex (char *name);
+
+void PF_makestatic (void)
+{
+	edict_t	*ent;
+	int		i;
+	
+	ent = G_EDICT(OFS_PARM0);
+
+	MSG_WriteByte (&sv.signon,svc_spawnstatic);
+
+	MSG_WriteByte (&sv.signon, SV_ModelIndex(pr_strings + ent->v.model));
+
+	MSG_WriteByte (&sv.signon, ent->v.frame);
+	MSG_WriteByte (&sv.signon, ent->v.colormap);
+	MSG_WriteByte (&sv.signon, ent->v.skin);
+	for (i=0 ; i<3 ; i++)
+	{
+		MSG_WriteCoord(&sv.signon, ent->v.origin[i]);
+		MSG_WriteAngle(&sv.signon, ent->v.angles[i]);
+	}
+
+// throw the entity away now
+	ED_Free (ent);
+}
+
+//=============================================================================
+
+/*
+==============
+PF_setspawnparms
+==============
+*/
+void PF_setspawnparms (void)
+{
+	edict_t	*ent;
+	int		i;
+	client_t	*client;
+
+	ent = G_EDICT(OFS_PARM0);
+	i = NUM_FOR_EDICT(ent);
+	if (i < 1 || i > svs.maxclients)
+		PR_RunError ("Entity is not a client");
+
+	// copy spawn parms out of the client_t
+	client = svs.clients + (i-1);
+
+	for (i=0 ; i< NUM_SPAWN_PARMS ; i++)
+		(&pr_global_struct->parm1)[i] = client->spawn_parms[i];
+}
+
+/*
+==============
+PF_changelevel
+==============
+*/
+void PF_changelevel (void)
+{
+	char	*s;
+
+// make sure we don't issue two changelevels
+	if (svs.changelevel_issued)
+		return;
+	svs.changelevel_issued = true;
+	
+	s = G_STRING(OFS_PARM0);
+	Cbuf_AddText (va("changelevel %s\n",s));
+}
+
+
+void PF_Fixme (void)
+{
+	PR_RunError ("unimplemented bulitin");
+}
+
+
+
+builtin_t pr_builtin[] =
+{
+	PF_Fixme,
+PF_makevectors,	// void(entity e)	makevectors 		= #1;
+PF_setorigin,	// void(entity e, vector o) setorigin	= #2;
+PF_setmodel,	// void(entity e, string m) setmodel	= #3;
+PF_setsize,	// void(entity e, vector min, vector max) setsize = #4;
+PF_Fixme,	// void(entity e, vector min, vector max) setabssize = #5;
+PF_break,	// void() break						= #6;
+PF_random,	// float() random						= #7;
+PF_sound,	// void(entity e, float chan, string samp) sound = #8;
+PF_normalize,	// vector(vector v) normalize			= #9;
+PF_error,	// void(string e) error				= #10;
+PF_objerror,	// void(string e) objerror				= #11;
+PF_vlen,	// float(vector v) vlen				= #12;
+PF_vectoyaw,	// float(vector v) vectoyaw		= #13;
+PF_Spawn,	// entity() spawn						= #14;
+PF_Remove,	// void(entity e) remove				= #15;
+PF_traceline,	// float(vector v1, vector v2, float tryents) traceline = #16;
+PF_checkclient,	// entity() clientlist					= #17;
+PF_Find,	// entity(entity start, .string fld, string match) find = #18;
+PF_precache_sound,	// void(string s) precache_sound		= #19;
+PF_precache_model,	// void(string s) precache_model		= #20;
+PF_stuffcmd,	// void(entity client, string s)stuffcmd = #21;
+PF_findradius,	// entity(vector org, float rad) findradius = #22;
+PF_bprint,	// void(string s) bprint				= #23;
+PF_sprint,	// void(entity client, string s) sprint = #24;
+PF_dprint,	// void(string s) dprint				= #25;
+PF_ftos,	// void(string s) ftos				= #26;
+PF_vtos,	// void(string s) vtos				= #27;
+PF_coredump,
+PF_traceon,
+PF_traceoff,
+PF_eprint,	// void(entity e) debug print an entire entity
+PF_walkmove, // float(float yaw, float dist) walkmove
+PF_Fixme, // float(float yaw, float dist) walkmove
+PF_droptofloor,
+PF_lightstyle,
+PF_rint,
+PF_floor,
+PF_ceil,
+PF_Fixme,
+PF_checkbottom,
+PF_pointcontents,
+PF_Fixme,
+PF_fabs,
+PF_aim,
+PF_cvar,
+PF_localcmd,
+PF_nextent,
+PF_particle,
+PF_changeyaw,
+PF_Fixme,
+PF_vectoangles,
+
+PF_WriteByte,
+PF_WriteChar,
+PF_WriteShort,
+PF_WriteLong,
+PF_WriteCoord,
+PF_WriteAngle,
+PF_WriteString,
+PF_WriteEntity,
+
+PF_Fixme,
+PF_Fixme,
+PF_Fixme,
+PF_Fixme,
+PF_Fixme,
+PF_Fixme,
+PF_Fixme,
+
+SV_MoveToGoal,
+PF_precache_file,
+PF_makestatic,
+
+PF_changelevel,
+PF_Fixme,
+
+PF_cvar_set,
+PF_centerprint,
+
+PF_ambientsound,
+
+PF_precache_model,
+PF_precache_sound,		// precache_sound2 is different only for qcc
+PF_precache_file,
+
+PF_setspawnparms
+};
+
+builtin_t *pr_builtins = pr_builtin;
+int pr_numbuiltins = sizeof(pr_builtin)/sizeof(pr_builtin[0]);
+
+================
+File: cmdlib.c/cmdlib.c
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+// cmdlib.c
+
+#include "cmdlib.h"
+#include <sys/time.h>
+
+#define PATHSEPERATOR   '/'
+
+// set these before calling CheckParm
+int myargc;
+char **myargv;
+
+char	com_token[1024];
+int		com_eof;
+
+/*
+================
+I_FloatTime
+================
+*/
+double I_FloatTime (void)
+{
+	struct timeval tp;
+	struct timezone tzp;
+	static int		secbase;
+
+	gettimeofday(&tp, &tzp);
+	
+	if (!secbase)
+	{
+		secbase = tp.tv_sec;
+		return tp.tv_usec/1000000.0;
+	}
+	
+	return (tp.tv_sec - secbase) + tp.tv_usec/1000000.0;
+}
+
+
+/*
+==============
+COM_Parse
+
+Parse a token out of a string
+==============
+*/
+char *COM_Parse (char *data)
+{
+	int		c;
+	int		len;
+	
+	len = 0;
+	com_token[0] = 0;
+	
+	if (!data)
+		return NULL;
+		
+// skip whitespace
+skipwhite:
+	while ( (c = *data) <= ' ')
+	{
+		if (c == 0)
+		{
+			com_eof = true;
+			return NULL;			// end of file;
+		}
+		data++;
+	}
+	
+// skip // comments
+	if (c=='/' && data[1] == '/')
+	{
+		while (*data && *data != '\n')
+			data++;
+		goto skipwhite;
+	}
+	
+
+// handle quoted strings specially
+	if (c == '\"')
+	{
+		data++;
+		do
+		{
+			c = *data++;
+			if (c=='\"')
+			{
+				com_token[len] = 0;
+				return data;
+			}
+			com_token[len] = c;
+			len++;
+		} while (1);
+	}
+
+// parse single characters
+	if (c=='{' || c=='}'|| c==')'|| c=='(' || c=='\'' || c==':')
+	{
+		com_token[len] = c;
+		len++;
+		com_token[len] = 0;
+		return data+1;
+	}
+
+// parse a regular word
+	do
+	{
+		com_token[len] = c;
+		data++;
+		len++;
+		c = *data;
+	if (c=='{' || c=='}'|| c==')'|| c=='(' || c=='\'' || c==':')
+			break;
+	} while (c>32);
+	
+	com_token[len] = 0;
+	return data;
+}
+
+
+
+#ifndef __MINGW32__
+/*
+================
+filelength
+================
+*/
+int filelength (int handle)
+{
+	struct stat	fileinfo;
+    
+	if (fstat (handle,&fileinfo) == -1)
+	{
+		Error ("Error fstating");
+	}
+
+	return fileinfo.st_size;
+}
+
+int tell (int handle)
+{
+	return lseek (handle, 0, SEEK_CUR);
+}
+#endif
+
+char *strupr (char *start)
+{
+	char	*in;
+	in = start;
+	while (*in)
+	{
+		*in = toupper(*in);
+		in++;
+	}
+	return start;
+}
+
+char *strlower (char *start)
+{
+	char	*in;
+	in = start;
+	while (*in)
+	{
+		*in = tolower(*in);
+		in++;
+	}
+	return start;
+}
+
+
+/*
+=============================================================================
+
+						MISC FUNCTIONS
+
+=============================================================================
+*/
+
+/*
+=================
+Error
+
+For abnormal program terminations
+=================
+*/
+void Error (char *error, ...)
+{
+	va_list argptr;
+
+	printf ("\n************ ERROR ************\n");
+
+	va_start (argptr,error);
+	vprintf (error,argptr);
+	va_end (argptr);
+	printf ("\n");
+	exit (1);
+}
+
+
+/*
+=================
+CheckParm
+
+Checks for the given parameter in the program's command line arguments
+Returns the argument number (1 to argc-1) or 0 if not present
+=================
+*/
+int CheckParm (char *check)
+{
+	int             i;
+
+	for (i = 1;i<myargc;i++)
+	{
+		if ( !strcasecmp(check, myargv[i]) )
+			return i;
+	}
+
+	return 0;
+}
+
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
+int SafeOpenWrite (char *filename)
+{
+	int     handle;
+
+	umask (0);
+	
+	handle = open(filename,O_WRONLY | O_CREAT | O_TRUNC | O_BINARY
+	, 0666);
+
+	if (handle == -1)
+		Error ("Error opening %s: %s",filename,strerror(errno));
+
+	return handle;
+}
+
+int SafeOpenRead (char *filename)
+{
+	int     handle;
+
+	handle = open(filename,O_RDONLY | O_BINARY);
+
+	if (handle == -1)
+		Error ("Error opening %s: %s",filename,strerror(errno));
+
+	return handle;
+}
+
+
+void SafeRead (int handle, void *buffer, long count)
+{
+	if (read (handle,buffer,count) != count)
+		Error ("File read failure");
+}
+
+
+void SafeWrite (int handle, void *buffer, long count)
+{
+	if (write (handle,buffer,count) != count)
+		Error ("File write failure");
+}
+
+
+void *SafeMalloc (long size)
+{
+	void *ptr;
+
+	ptr = malloc (size);
+
+	if (!ptr)
+		Error ("Malloc failure for %lu bytes",size);
+
+	return ptr;
+}
+
+
+/*
+==============
+LoadFile
+==============
+*/
+long    LoadFile (char *filename, void **bufferptr)
+{
+	int             handle;
+	long    length;
+	void    *buffer;
+
+	handle = SafeOpenRead (filename);
+	length = filelength (handle);
+	buffer = SafeMalloc (length+1);
+	((byte *)buffer)[length] = 0;
+	SafeRead (handle, buffer, length);
+	close (handle);
+
+	*bufferptr = buffer;
+	return length;
+}
+
+
+/*
+==============
+SaveFile
+==============
+*/
+void    SaveFile (char *filename, void *buffer, long count)
+{
+	int             handle;
+
+	handle = SafeOpenWrite (filename);
+	SafeWrite (handle, buffer, count);
+	close (handle);
+}
+
+
+
+void DefaultExtension (char *path, char *extension)
+{
+	char    *src;
+//
+// if path doesn't have a .EXT, append extension
+// (extension should include the .)
+//
+	src = path + strlen(path) - 1;
+
+	while (*src != PATHSEPERATOR && src != path)
+	{
+		if (*src == '.')
+			return;                 // it has an extension
+		src--;
+	}
+
+	strcat (path, extension);
+}
+
+
+void DefaultPath (char *path, char *basepath)
+{
+	char    temp[128];
+
+	if (path[0] == PATHSEPERATOR)
+		return;                   // absolute path location
+	strcpy (temp,path);
+	strcpy (path,basepath);
+	strcat (path,temp);
+}
+
+
+void    StripFilename (char *path)
+{
+	int             length;
+
+	length = strlen(path)-1;
+	while (length > 0 && path[length] != PATHSEPERATOR)
+		length--;
+	path[length] = 0;
+}
+
+void    StripExtension (char *path)
+{
+	int             length;
+
+	length = strlen(path)-1;
+	while (length > 0 && path[length] != '.')
+	{
+		length--;
+		if (path[length] == '/')
+			return;		// no extension
+	}
+	if (length)
+		path[length] = 0;
+}
+
+
+/*
+====================
+Extract file parts
+====================
+*/
+void ExtractFilePath (char *path, char *dest)
+{
+	char    *src;
+
+	src = path + strlen(path) - 1;
+
+//
+// back up until a \ or the start
+//
+	while (src != path && *(src-1) != PATHSEPERATOR)
+		src--;
+
+	memcpy (dest, path, src-path);
+	dest[src-path] = 0;
+}
+
+void ExtractFileBase (char *path, char *dest)
+{
+	char    *src;
+
+	src = path + strlen(path) - 1;
+
+//
+// back up until a \ or the start
+//
+	while (src != path && *(src-1) != PATHSEPERATOR)
+		src--;
+
+	while (*src && *src != '.')
+	{
+		*dest++ = *src++;
+	}
+	*dest = 0;
+}
+
+void ExtractFileExtension (char *path, char *dest)
+{
+	char    *src;
+
+	src = path + strlen(path) - 1;
+
+//
+// back up until a . or the start
+//
+	while (src != path && *(src-1) != '.')
+		src--;
+	if (src == path)
+	{
+		*dest = 0;	// no extension
+		return;
+	}
+
+	strcpy (dest,src);
+}
+
+
+/*
+==============
+ParseNum / ParseHex
+==============
+*/
+long ParseHex (char *hex)
+{
+	char    *str;
+	long    num;
+
+	num = 0;
+	str = hex;
+
+	while (*str)
+	{
+		num <<= 4;
+		if (*str >= '0' && *str <= '9')
+			num += *str-'0';
+		else if (*str >= 'a' && *str <= 'f')
+			num += 10 + *str-'a';
+		else if (*str >= 'A' && *str <= 'F')
+			num += 10 + *str-'A';
+		else
+			Error ("Bad hex number: %s",hex);
+		str++;
+	}
+
+	return num;
+}
+
+
+long ParseNum (char *str)
+{
+	if (str[0] == '$')
+		return ParseHex (str+1);
+	if (str[0] == '0' && str[1] == 'x')
+		return ParseHex (str+2);
+	return atol (str);
+}
+
+
+
+/*
+============================================================================
+
+					BYTE ORDER FUNCTIONS
+
+============================================================================
+*/
+
+#ifdef __BIG_ENDIAN__
+
+short   LittleShort (short l)
+{
+	byte    b1,b2;
+
+	b1 = l&255;
+	b2 = (l>>8)&255;
+
+	return (b1<<8) + b2;
+}
+
+short   BigShort (short l)
+{
+	return l;
+}
+
+
+long    LittleLong (long l)
+{
+	byte    b1,b2,b3,b4;
+
+	b1 = l&255;
+	b2 = (l>>8)&255;
+	b3 = (l>>16)&255;
+	b4 = (l>>24)&255;
+
+	return ((long)b1<<24) + ((long)b2<<16) + ((long)b3<<8) + b4;
+}
+
+long    BigLong (long l)
+{
+	return l;
+}
+
+
+float	LittleFloat (float l)
+{
+	union {byte b[4]; float f;} in, out;
+	
+	in.f = l;
+	out.b[0] = in.b[3];
+	out.b[1] = in.b[2];
+	out.b[2] = in.b[1];
+	out.b[3] = in.b[0];
+	
+	return out.f;
+}
+
+float	BigFloat (float l)
+{
+	return l;
+}
+
+
+#else
+
+
+short   BigShort (short l)
+{
+	byte    b1,b2;
+
+	b1 = l&255;
+	b2 = (l>>8)&255;
+
+	return (b1<<8) + b2;
+}
+
+short   LittleShort (short l)
+{
+	return l;
+}
+
+
+long    BigLong (long l)
+{
+	byte    b1,b2,b3,b4;
+
+	b1 = l&255;
+	b2 = (l>>8)&255;
+	b3 = (l>>16)&255;
+	b4 = (l>>24)&255;
+
+	return ((long)b1<<24) + ((long)b2<<16) + ((long)b3<<8) + b4;
+}
+
+long    LittleLong (long l)
+{
+	return l;
+}
+
+float	BigFloat (float l)
+{
+	union {byte b[4]; float f;} in, out;
+	
+	in.f = l;
+	out.b[0] = in.b[3];
+	out.b[1] = in.b[2];
+	out.b[2] = in.b[1];
+	out.b[3] = in.b[0];
+	
+	return out.f;
+}
+
+float	LittleFloat (float l)
+{
+	return l;
+}
+
+
+
+#endif
+
+================
+File: cmdlib.h/cmdlib.h
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+// cmdlib.h
+
+#ifndef __CMDLIB__
+#define __CMDLIB__
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <ctype.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/file.h>
+#include <stdarg.h>
+
+#ifdef NeXT
+#include <libc.h>
+#endif
+
+#ifndef __BYTEBOOL__
+#define __BYTEBOOL__
+typedef enum {false, true} boolean;
+typedef unsigned char byte;
+#endif
+
+// the dec offsetof macro doesn't work very well...
+#define myoffsetof(type,identifier) ((size_t)&((type *)0)->identifier)
+
+
+// set these before calling CheckParm
+extern int myargc;
+extern char **myargv;
+
+char *strupr (char *in);
+char *strlower (char *in);
+#ifndef __MINGW32__
+int filelength (int handle);
+int tell (int handle);
+#endif
+
+double I_FloatTime (void);
+
+void	Error (char *error, ...);
+int		CheckParm (char *check);
+
+int 	SafeOpenWrite (char *filename);
+int 	SafeOpenRead (char *filename);
+void 	SafeRead (int handle, void *buffer, long count);
+void 	SafeWrite (int handle, void *buffer, long count);
+void 	*SafeMalloc (long size);
+
+long	LoadFile (char *filename, void **bufferptr);
+void	SaveFile (char *filename, void *buffer, long count);
+
+void 	DefaultExtension (char *path, char *extension);
+void 	DefaultPath (char *path, char *basepath);
+void 	StripFilename (char *path);
+void 	StripExtension (char *path);
+
+void 	ExtractFilePath (char *path, char *dest);
+void 	ExtractFileBase (char *path, char *dest);
+void	ExtractFileExtension (char *path, char *dest);
+
+long 	ParseNum (char *str);
+
+short	BigShort (short l);
+short	LittleShort (short l);
+long	BigLong (long l);
+long	LittleLong (long l);
+float	BigFloat (float l);
+float	LittleFloat (float l);
+
+
+char *COM_Parse (char *data);
+
+extern	char	com_token[1024];
+extern	int		com_eof;
+
+
+
+#endif
+
+================
+File: COPYING/COPYING
+================
+GNU GENERAL PUBLIC LICENSE
+		       Version 2, June 1991
+
+ Copyright (C) 1989, 1991 Free Software Foundation, Inc.
+     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+			    Preamble
+
+  The licenses for most software are designed to take away your
+freedom to share and change it.  By contrast, the GNU General Public
+License is intended to guarantee your freedom to share and change free
+software--to make sure the software is free for all its users.  This
+General Public License applies to most of the Free Software
+Foundation's software and to any other program whose authors commit to
+using it.  (Some other Free Software Foundation software is covered by
+the GNU Library General Public License instead.)  You can apply it to
+your programs, too.
+
+  When we speak of free software, we are referring to freedom, not
+price.  Our General Public Licenses are designed to make sure that you
+have the freedom to distribute copies of free software (and charge for
+this service if you wish), that you receive source code or can get it
+if you want it, that you can change the software or use pieces of it
+in new free programs; and that you know you can do these things.
+
+  To protect your rights, we need to make restrictions that forbid
+anyone to deny you these rights or to ask you to surrender the rights.
+These restrictions translate to certain responsibilities for you if you
+distribute copies of the software, or if you modify it.
+
+  For example, if you distribute copies of such a program, whether
+gratis or for a fee, you must give the recipients all the rights that
+you have.  You must make sure that they, too, receive or can get the
+source code.  And you must show them these terms so they know their
+rights.
+
+  We protect your rights with two steps: (1) copyright the software, and
+(2) offer you this license which gives you legal permission to copy,
+distribute and/or modify the software.
+
+  Also, for each author's protection and ours, we want to make certain
+that everyone understands that there is no warranty for this free
+software.  If the software is modified by someone else and passed on, we
+want its recipients to know that what they have is not the original, so
+that any problems introduced by others will not reflect on the original
+authors' reputations.
+
+  Finally, any free program is threatened constantly by software
+patents.  We wish to avoid the danger that redistributors of a free
+program will individually obtain patent licenses, in effect making the
+program proprietary.  To prevent this, we have made it clear that any
+patent must be licensed for everyone's free use or not licensed at all.
+
+  The precise terms and conditions for copying, distribution and
+modification follow.
+
+		    GNU GENERAL PUBLIC LICENSE
+   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
+
+  0. This License applies to any program or other work which contains
+a notice placed by the copyright holder saying it may be distributed
+under the terms of this General Public License.  The "Program", below,
+refers to any such program or work, and a "work based on the Program"
+means either the Program or any derivative work under copyright law:
+that is to say, a work containing the Program or a portion of it,
+either verbatim or with modifications and/or translated into another
+language.  (Hereinafter, translation is included without limitation in
+the term "modification".)  Each licensee is addressed as "you".
+
+Activities other than copying, distribution and modification are not
+covered by this License; they are outside its scope.  The act of
+running the Program is not restricted, and the output from the Program
+is covered only if its contents constitute a work based on the
+Program (independent of having been made by running the Program).
+Whether that is true depends on what the Program does.
+
+  1. You may copy and distribute verbatim copies of the Program's
+source code as you receive it, in any medium, provided that you
+conspicuously and appropriately publish on each copy an appropriate
+copyright notice and disclaimer of warranty; keep intact all the
+notices that refer to this License and to the absence of any warranty;
+and give any other recipients of the Program a copy of this License
+along with the Program.
+
+You may charge a fee for the physical act of transferring a copy, and
+you may at your option offer warranty protection in exchange for a fee.
+
+  2. You may modify your copy or copies of the Program or any portion
+of it, thus forming a work based on the Program, and copy and
+distribute such modifications or work under the terms of Section 1
+above, provided that you also meet all of these conditions:
+
+    a) You must cause the modified files to carry prominent notices
+    stating that you changed the files and the date of any change.
+
+    b) You must cause any work that you distribute or publish, that in
+    whole or in part contains or is derived from the Program or any
+    part thereof, to be licensed as a whole at no charge to all third
+    parties under the terms of this License.
+
+    c) If the modified program normally reads commands interactively
+    when run, you must cause it, when started running for such
+    interactive use in the most ordinary way, to print or display an
+    announcement including an appropriate copyright notice and a
+    notice that there is no warranty (or else, saying that you provide
+    a warranty) and that users may redistribute the program under
+    these conditions, and telling the user how to view a copy of this
+    License.  (Exception: if the Program itself is interactive but
+    does not normally print such an announcement, your work based on
+    the Program is not required to print an announcement.)
+
+These requirements apply to the modified work as a whole.  If
+identifiable sections of that work are not derived from the Program,
+and can be reasonably considered independent and separate works in
+themselves, then this License, and its terms, do not apply to those
+sections when you distribute them as separate works.  But when you
+distribute the same sections as part of a whole which is a work based
+on the Program, the distribution of the whole must be on the terms of
+this License, whose permissions for other licensees extend to the
+entire whole, and thus to each and every part regardless of who wrote it.
+
+Thus, it is not the intent of this section to claim rights or contest
+your rights to work written entirely by you; rather, the intent is to
+exercise the right to control the distribution of derivative or
+collective works based on the Program.
+
+In addition, mere aggregation of another work not based on the Program
+with the Program (or with a work based on the Program) on a volume of
+a storage or distribution medium does not bring the other work under
+the scope of this License.
+
+  3. You may copy and distribute the Program (or a work based on it,
+under Section 2) in object code or executable form under the terms of
+Sections 1 and 2 above provided that you also do one of the following:
+
+    a) Accompany it with the complete corresponding machine-readable
+    source code, which must be distributed under the terms of Sections
+    1 and 2 above on a medium customarily used for software interchange; or,
+
+    b) Accompany it with a written offer, valid for at least three
+    years, to give any third party, for a charge no more than your
+    cost of physically performing source distribution, a complete
+    machine-readable copy of the corresponding source code, to be
+    distributed under the terms of Sections 1 and 2 above on a medium
+    customarily used for software interchange; or,
+
+    c) Accompany it with the information you received as to the offer
+    to distribute corresponding source code.  (This alternative is
+    allowed only for noncommercial distribution and only if you
+    received the program in object code or executable form with such
+    an offer, in accord with Subsection b above.)
+
+The source code for a work means the preferred form of the work for
+making modifications to it.  For an executable work, complete source
+code means all the source code for all modules it contains, plus any
+associated interface definition files, plus the scripts used to
+control compilation and installation of the executable.  However, as a
+special exception, the source code distributed need not include
+anything that is normally distributed (in either source or binary
+form) with the major components (compiler, kernel, and so on) of the
+operating system on which the executable runs, unless that component
+itself accompanies the executable.
+
+If distribution of executable or object code is made by offering
+access to copy from a designated place, then offering equivalent
+access to copy the source code from the same place counts as
+distribution of the source code, even though third parties are not
+compelled to copy the source along with the object code.
+
+  4. You may not copy, modify, sublicense, or distribute the Program
+except as expressly provided under this License.  Any attempt
+otherwise to copy, modify, sublicense or distribute the Program is
+void, and will automatically terminate your rights under this License.
+However, parties who have received copies, or rights, from you under
+this License will not have their licenses terminated so long as such
+parties remain in full compliance.
+
+  5. You are not required to accept this License, since you have not
+signed it.  However, nothing else grants you permission to modify or
+distribute the Program or its derivative works.  These actions are
+prohibited by law if you do not accept this License.  Therefore, by
+modifying or distributing the Program (or any work based on the
+Program), you indicate your acceptance of this License to do so, and
+all its terms and conditions for copying, distributing or modifying
+the Program or works based on it.
+
+  6. Each time you redistribute the Program (or any work based on the
+Program), the recipient automatically receives a license from the
+original licensor to copy, distribute or modify the Program subject to
+these terms and conditions.  You may not impose any further
+restrictions on the recipients' exercise of the rights granted herein.
+You are not responsible for enforcing compliance by third parties to
+this License.
+
+  7. If, as a consequence of a court judgment or allegation of patent
+infringement or for any other reason (not limited to patent issues),
+conditions are imposed on you (whether by court order, agreement or
+otherwise) that contradict the conditions of this License, they do not
+excuse you from the conditions of this License.  If you cannot
+distribute so as to satisfy simultaneously your obligations under this
+License and any other pertinent obligations, then as a consequence you
+may not distribute the Program at all.  For example, if a patent
+license would not permit royalty-free redistribution of the Program by
+all those who receive copies directly or indirectly through you, then
+the only way you could satisfy both it and this License would be to
+refrain entirely from distribution of the Program.
+
+If any portion of this section is held invalid or unenforceable under
+any particular circumstance, the balance of the section is intended to
+apply and the section as a whole is intended to apply in other
+circumstances.
+
+It is not the purpose of this section to induce you to infringe any
+patents or other property right claims or to contest validity of any
+such claims; this section has the sole purpose of protecting the
+integrity of the free software distribution system, which is
+implemented by public license practices.  Many people have made
+generous contributions to the wide range of software distributed
+through that system in reliance on consistent application of that
+system; it is up to the author/donor to decide if he or she is willing
+to distribute software through any other system and a licensee cannot
+impose that choice.
+
+This section is intended to make thoroughly clear what is believed to
+be a consequence of the rest of this License.
+
+  8. If the distribution and/or use of the Program is restricted in
+certain countries either by patents or by copyrighted interfaces, the
+original copyright holder who places the Program under this License
+may add an explicit geographical distribution limitation excluding
+those countries, so that distribution is permitted only in or among
+countries not thus excluded.  In such case, this License incorporates
+the limitation as if written in the body of this License.
+
+  9. The Free Software Foundation may publish revised and/or new versions
+of the General Public License from time to time.  Such new versions will
+be similar in spirit to the present version, but may differ in detail to
+address new problems or concerns.
+
+Each version is given a distinguishing version number.  If the Program
+specifies a version number of this License which applies to it and "any
+later version", you have the option of following the terms and conditions
+either of that version or of any later version published by the Free
+Software Foundation.  If the Program does not specify a version number of
+this License, you may choose any version ever published by the Free Software
+Foundation.
+
+  10. If you wish to incorporate parts of the Program into other free
+programs whose distribution conditions are different, write to the author
+to ask for permission.  For software which is copyrighted by the Free
+Software Foundation, write to the Free Software Foundation; we sometimes
+make exceptions for this.  Our decision will be guided by the two goals
+of preserving the free status of all derivatives of our free software and
+of promoting the sharing and reuse of software generally.
+
+			    NO WARRANTY
+
+  11. BECAUSE THE PROGRAM IS LICENSED FREE OF CHARGE, THERE IS NO WARRANTY
+FOR THE PROGRAM, TO THE EXTENT PERMITTED BY APPLICABLE LAW.  EXCEPT WHEN
+OTHERWISE STATED IN WRITING THE COPYRIGHT HOLDERS AND/OR OTHER PARTIES
+PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED
+OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.  THE ENTIRE RISK AS
+TO THE QUALITY AND PERFORMANCE OF THE PROGRAM IS WITH YOU.  SHOULD THE
+PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF ALL NECESSARY SERVICING,
+REPAIR OR CORRECTION.
+
+  12. IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
+WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MAY MODIFY AND/OR
+REDISTRIBUTE THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES,
+INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING
+OUT OF THE USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED
+TO LOSS OF DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY
+YOU OR THIRD PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER
+PROGRAMS), EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES.
+
+		     END OF TERMS AND CONDITIONS
+
+	    How to Apply These Terms to Your New Programs
+
+  If you develop a new program, and you want it to be of the greatest
+possible use to the public, the best way to achieve this is to make it
+free software which everyone can redistribute and change under these terms.
+
+  To do so, attach the following notices to the program.  It is safest
+to attach them to the start of each source file to most effectively
+convey the exclusion of warranty; and each file should have at least
+the "copyright" line and a pointer to where the full notice is found.
+
+    <one line to give the program's name and a brief idea of what it does.>
+    Copyright (C) <year>  <name of author>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+
+Also add information on how to contact you by electronic and paper mail.
+
+If the program is interactive, make it output a short notice like this
+when it starts in an interactive mode:
+
+    Gnomovision version 69, Copyright (C) year  name of author
+    Gnomovision comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+    This is free software, and you are welcome to redistribute it
+    under certain conditions; type `show c' for details.
+
+The hypothetical commands `show w' and `show c' should show the appropriate
+parts of the General Public License.  Of course, the commands you use may
+be called something other than `show w' and `show c'; they could even be
+mouse-clicks or menu items--whatever suits your program.
+
+You should also get your employer (if you work as a programmer) or your
+school, if any, to sign a "copyright disclaimer" for the program, if
+necessary.  Here is a sample; alter the names:
+
+  Yoyodyne, Inc., hereby disclaims all copyright interest in the program
+  `Gnomovision' (which makes passes at compilers) written by James Hacker.
+
+  <signature of Ty Coon>, 1 April 1989
+  Ty Coon, President of Vice
+
+This General Public License does not permit incorporating your program into
+proprietary programs.  If your program is a subroutine library, you may
+consider it more useful to permit linking proprietary applications with the
+library.  If this is what you want to do, use the GNU Library General
+Public License instead of this License.
+
+================
+File: makefile/makefile
+================
+CFLAGS = -g -Wall
+
+EXES = qcc
+
+all: $(EXES)
+
+install:
+	make app
+	cp $(EXES) /LocalApps
+
+app:
+	make "CFLAGS = -O4 -g -Wall -arch i386 -arch hppa"
+
+debug:
+	make "CFLAGS = -g -Wall"
+
+profile:
+	make "CFLAGS = -pg -Wall"
+
+clean:
+	rm -f *.o $(EXES)
+
+.c.o: ; cc -c $(CFLAGS) -o $@ $*.c
+
+QCCFILES = qcc.o pr_lex.o pr_comp.o cmdlib.o
+qcc : $(QCCFILES)
+	cc $(CFLAGS) -o qcc $(QCCFILES)
+
+================
+File: pr_comp.c/pr_comp.c
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+#include "qcc.h"
+
+
+pr_info_t	pr;
+def_t		*pr_global_defs[MAX_REGS];	// to find def for a global variable
+int			pr_edict_size;
+
+//========================================
+
+def_t		*pr_scope;		// the function being parsed, or NULL
+boolean	pr_dumpasm;
+string_t	s_file;			// filename for function definition
+
+int			locals_end;		// for tracking local variables vs temps
+
+jmp_buf		pr_parse_abort;		// longjump with this on parse error
+
+void PR_ParseDefs (void);
+
+//========================================
+
+
+opcode_t pr_opcodes[] =
+{
+ {"<DONE>", "DONE", -1, false, &def_entity, &def_field, &def_void},
+
+ {"*", "MUL_F", 2, false, &def_float, &def_float, &def_float},
+ {"*", "MUL_V", 2, false, &def_vector, &def_vector, &def_float},
+ {"*", "MUL_FV", 2, false, &def_float, &def_vector, &def_vector},
+ {"*", "MUL_VF", 2, false, &def_vector, &def_float, &def_vector},
+ 
+ {"/", "DIV", 2, false, &def_float, &def_float, &def_float},
+
+ {"+", "ADD_F", 3, false, &def_float, &def_float, &def_float},
+ {"+", "ADD_V", 3, false, &def_vector, &def_vector, &def_vector},
+  
+ {"-", "SUB_F", 3, false, &def_float, &def_float, &def_float},
+ {"-", "SUB_V", 3, false, &def_vector, &def_vector, &def_vector},
+
+ {"==", "EQ_F", 4, false, &def_float, &def_float, &def_float},
+ {"==", "EQ_V", 4, false, &def_vector, &def_vector, &def_float},
+ {"==", "EQ_S", 4, false, &def_string, &def_string, &def_float},
+ {"==", "EQ_E", 4, false, &def_entity, &def_entity, &def_float},
+ {"==", "EQ_FNC", 4, false, &def_function, &def_function, &def_float},
+ 
+ {"!=", "NE_F", 4, false, &def_float, &def_float, &def_float},
+ {"!=", "NE_V", 4, false, &def_vector, &def_vector, &def_float},
+ {"!=", "NE_S", 4, false, &def_string, &def_string, &def_float},
+ {"!=", "NE_E", 4, false, &def_entity, &def_entity, &def_float},
+ {"!=", "NE_FNC", 4, false, &def_function, &def_function, &def_float},
+ 
+ {"<=", "LE", 4, false, &def_float, &def_float, &def_float},
+ {">=", "GE", 4, false, &def_float, &def_float, &def_float},
+ {"<", "LT", 4, false, &def_float, &def_float, &def_float},
+ {">", "GT", 4, false, &def_float, &def_float, &def_float},
+
+ {".", "INDIRECT", 1, false, &def_entity, &def_field, &def_float},
+ {".", "INDIRECT", 1, false, &def_entity, &def_field, &def_vector},
+ {".", "INDIRECT", 1, false, &def_entity, &def_field, &def_string},
+ {".", "INDIRECT", 1, false, &def_entity, &def_field, &def_entity},
+ {".", "INDIRECT", 1, false, &def_entity, &def_field, &def_field},
+ {".", "INDIRECT", 1, false, &def_entity, &def_field, &def_function},
+
+ {".", "ADDRESS", 1, false, &def_entity, &def_field, &def_pointer},
+
+ {"=", "STORE_F", 5, true, &def_float, &def_float, &def_float},
+ {"=", "STORE_V", 5, true, &def_vector, &def_vector, &def_vector},
+ {"=", "STORE_S", 5, true, &def_string, &def_string, &def_string},
+ {"=", "STORE_ENT", 5, true, &def_entity, &def_entity, &def_entity},
+ {"=", "STORE_FLD", 5, true, &def_field, &def_field, &def_field},
+ {"=", "STORE_FNC", 5, true, &def_function, &def_function, &def_function},
+
+ {"=", "STOREP_F", 5, true, &def_pointer, &def_float, &def_float},
+ {"=", "STOREP_V", 5, true, &def_pointer, &def_vector, &def_vector},
+ {"=", "STOREP_S", 5, true, &def_pointer, &def_string, &def_string},
+ {"=", "STOREP_ENT", 5, true, &def_pointer, &def_entity, &def_entity},
+ {"=", "STOREP_FLD", 5, true, &def_pointer, &def_field, &def_field},
+ {"=", "STOREP_FNC", 5, true, &def_pointer, &def_function, &def_function},
+
+ {"<RETURN>", "RETURN", -1, false, &def_void, &def_void, &def_void},
+  
+ {"!", "NOT_F", -1, false, &def_float, &def_void, &def_float},
+ {"!", "NOT_V", -1, false, &def_vector, &def_void, &def_float},
+ {"!", "NOT_S", -1, false, &def_vector, &def_void, &def_float},
+ {"!", "NOT_ENT", -1, false, &def_entity, &def_void, &def_float},
+ {"!", "NOT_FNC", -1, false, &def_function, &def_void, &def_float},
+  
+  {"<IF>", "IF", -1, false, &def_float, &def_float, &def_void},
+  {"<IFNOT>", "IFNOT", -1, false, &def_float, &def_float, &def_void},
+  
+// calls returns REG_RETURN
+ {"<CALL0>", "CALL0", -1, false, &def_function, &def_void, &def_void},
+ {"<CALL1>", "CALL1", -1, false, &def_function, &def_void, &def_void},
+ {"<CALL2>", "CALL2", -1, false, &def_function, &def_void, &def_void}, 
+ {"<CALL3>", "CALL3", -1, false, &def_function, &def_void, &def_void}, 
+ {"<CALL4>", "CALL4", -1, false, &def_function, &def_void, &def_void},
+ {"<CALL5>", "CALL5", -1, false, &def_function, &def_void, &def_void},
+ {"<CALL6>", "CALL6", -1, false, &def_function, &def_void, &def_void},
+ {"<CALL7>", "CALL7", -1, false, &def_function, &def_void, &def_void},
+ {"<CALL8>", "CALL8", -1, false, &def_function, &def_void, &def_void},
+  
+ {"<STATE>", "STATE", -1, false, &def_float, &def_float, &def_void},
+  
+ {"<GOTO>", "GOTO", -1, false, &def_float, &def_void, &def_void},
+  
+ {"&&", "AND", 6, false, &def_float, &def_float, &def_float},
+ {"||", "OR", 6, false, &def_float, &def_float, &def_float},
+
+ {"&", "BITAND", 2, false, &def_float, &def_float, &def_float},
+ {"|", "BITOR", 2, false, &def_float, &def_float, &def_float},
+
+ {NULL}
+};
+
+#define	TOP_PRIORITY	6
+#define	NOT_PRIORITY	4
+
+def_t *PR_Expression (int priority);
+
+def_t	junkdef;
+
+//===========================================================================
+
+
+/*
+============
+PR_Statement
+
+Emits a primitive statement, returning the var it places it's value in
+============
+*/
+def_t *PR_Statement ( opcode_t *op, def_t *var_a, def_t *var_b)
+{
+	dstatement_t	*statement;
+	def_t			*var_c;
+	
+	statement = &statements[numstatements];
+	numstatements++;
+	
+	statement_linenums[statement-statements] = pr_source_line;
+	statement->op = op - pr_opcodes;
+	statement->a = var_a ? var_a->ofs : 0;
+	statement->b = var_b ? var_b->ofs : 0;
+	if (op->type_c == &def_void || op->right_associative)
+	{
+		var_c = NULL;
+		statement->c = 0;			// ifs, gotos, and assignments
+									// don't need vars allocated
+	}
+	else
+	{	// allocate result space
+		var_c = malloc (sizeof(def_t));
+		memset (var_c, 0, sizeof(def_t));
+		var_c->ofs = numpr_globals;
+		var_c->type = op->type_c->type;
+
+		statement->c = numpr_globals;
+		numpr_globals += type_size[op->type_c->type->type];
+	}
+
+	if (op->right_associative)
+		return var_a;
+	return var_c;
+}
+
+/*
+============
+PR_ParseImmediate
+
+Looks for a preexisting constant
+============
+*/
+def_t	*PR_ParseImmediate (void)
+{
+	def_t	*cn;
+	
+// check for a constant with the same value
+	for (cn=pr.def_head.next ; cn ; cn=cn->next)
+	{
+		if (!cn->initialized)
+			continue;
+		if (cn->type != pr_immediate_type)
+			continue;
+		if (pr_immediate_type == &type_string)
+		{
+			if (!strcmp(G_STRING(cn->ofs), pr_immediate_string) )
+			{
+				PR_Lex ();
+				return cn;
+			}
+		}
+		else if (pr_immediate_type == &type_float)
+		{
+			if ( G_FLOAT(cn->ofs) == pr_immediate._float )
+			{
+				PR_Lex ();
+				return cn;
+			}
+		}
+		else if	(pr_immediate_type == &type_vector)
+		{
+			if ( ( G_FLOAT(cn->ofs) == pr_immediate.vector[0] )
+			&& ( G_FLOAT(cn->ofs+1) == pr_immediate.vector[1] )
+			&& ( G_FLOAT(cn->ofs+2) == pr_immediate.vector[2] ) )
+			{
+				PR_Lex ();
+				return cn;
+			}
+		}
+		else			
+			PR_ParseError ("weird immediate type");		
+	}
+	
+// allocate a new one
+	cn = malloc (sizeof(def_t));
+	cn->next = NULL;
+	pr.def_tail->next = cn;
+	pr.def_tail = cn;
+	cn->type = pr_immediate_type;
+	cn->name = "IMMEDIATE";
+	cn->initialized = 1;
+	cn->scope = NULL;		// always share immediates
+
+// copy the immediate to the global area
+	cn->ofs = numpr_globals;
+	pr_global_defs[cn->ofs] = cn;
+	numpr_globals += type_size[pr_immediate_type->type];
+	if (pr_immediate_type == &type_string)
+		pr_immediate.string = CopyString (pr_immediate_string);
+	
+	memcpy (pr_globals + cn->ofs, &pr_immediate, 4*type_size[pr_immediate_type->type]);
+	
+	PR_Lex ();
+
+	return cn;
+}
+
+
+void PrecacheSound (def_t *e, int ch)
+{
+	char	*n;
+	int		i;
+	
+	if (!e->ofs)
+		return;
+	n = G_STRING(e->ofs);
+	for (i=0 ; i<numsounds ; i++)
+		if (!strcmp(n, precache_sounds[i]))
+			return;
+	if (numsounds == MAX_SOUNDS)
+		Error ("PrecacheSound: numsounds == MAX_SOUNDS");
+	strcpy (precache_sounds[i], n);
+	if (ch >= '1'  && ch <= '9')
+		precache_sounds_block[i] = ch - '0';
+	else
+		precache_sounds_block[i] = 1;
+	numsounds++;
+}
+
+void PrecacheModel (def_t *e, int ch)
+{
+	char	*n;
+	int		i;
+	
+	if (!e->ofs)
+		return;
+	n = G_STRING(e->ofs);
+	for (i=0 ; i<nummodels ; i++)
+		if (!strcmp(n, precache_models[i]))
+			return;
+	if (numsounds == MAX_SOUNDS)
+		Error ("PrecacheModels: numsounds == MAX_SOUNDS");
+	strcpy (precache_models[i], n);
+	if (ch >= '1'  && ch <= '9')
+		precache_models_block[i] = ch - '0';
+	else
+		precache_models_block[i] = 1;
+	nummodels++;
+}
+
+void PrecacheFile (def_t *e, int ch)
+{
+	char	*n;
+	int		i;
+	
+	if (!e->ofs)
+		return;
+	n = G_STRING(e->ofs);
+	for (i=0 ; i<numfiles ; i++)
+		if (!strcmp(n, precache_files[i]))
+			return;
+	if (numfiles == MAX_FILES)
+		Error ("PrecacheFile: numfiles == MAX_FILES");
+	strcpy (precache_files[i], n);
+	if (ch >= '1'  && ch <= '9')
+		precache_files_block[i] = ch - '0';
+	else
+		precache_files_block[i] = 1;
+	numfiles++;
+}
+
+/*
+============
+PR_ParseFunctionCall
+============
+*/
+def_t *PR_ParseFunctionCall (def_t *func)
+{
+	def_t		*e;
+	int			arg;
+	type_t		*t;
+	
+	t = func->type;
+
+	if (t->type != ev_function)
+		PR_ParseError ("not a function");
+	
+// copy the arguments to the global parameter variables
+	arg = 0;
+	if (!PR_Check(")"))
+	{
+		do
+		{
+			if (t->num_parms != -1 && arg >= t->num_parms)
+				PR_ParseError ("too many parameters");
+			e = PR_Expression (TOP_PRIORITY);
+
+			if (arg == 0 && func->name)
+			{
+			// save information for model and sound caching
+				if (!strncmp(func->name,"precache_sound", 14))
+					PrecacheSound (e, func->name[14]);
+				else if (!strncmp(func->name,"precache_model", 14))
+					PrecacheModel (e, func->name[14]);
+				else if (!strncmp(func->name,"precache_file", 13))
+					PrecacheFile (e, func->name[13]);
+			}
+						
+			if (t->num_parms != -1 && ( e->type != t->parm_types[arg] ) )
+				PR_ParseError ("type mismatch on parm %i", arg);
+		// a vector copy will copy everything
+			def_parms[arg].type = t->parm_types[arg];
+			PR_Statement (&pr_opcodes[OP_STORE_V], e, &def_parms[arg]);
+			arg++;
+		} while (PR_Check (","));
+	
+		if (t->num_parms != -1 && arg != t->num_parms)
+			PR_ParseError ("too few parameters");
+		PR_Expect (")");
+	}
+	if (arg >8)
+		PR_ParseError ("More than eight parameters");
+		
+
+	PR_Statement (&pr_opcodes[OP_CALL0+arg], func, 0);
+	
+	def_ret.type = t->aux_type;
+	return &def_ret;
+}
+
+/*
+============
+PR_ParseValue
+
+Returns the global ofs for the current token
+============
+*/
+def_t	*PR_ParseValue (void)
+{
+	def_t		*d;
+	char		*name;
+	
+// if the token is an immediate, allocate a constant for it
+	if (pr_token_type == tt_immediate)
+		return PR_ParseImmediate ();
+	
+	name = PR_ParseName ();
+	
+// look through the defs
+	d = PR_GetDef (NULL, name, pr_scope, false);
+	if (!d)
+		PR_ParseError ("Unknown value \"%s\"", name);	
+	return d;
+}
+
+
+/*
+============
+PR_Term
+============
+*/
+def_t *PR_Term (void)
+{
+	def_t	*e, *e2;
+	etype_t	t;
+	
+	if (PR_Check ("!"))
+	{
+		e = PR_Expression (NOT_PRIORITY);
+		t = e->type->type;
+		if (t == ev_float)
+			e2 = PR_Statement (&pr_opcodes[OP_NOT_F], e, 0);
+		else if (t == ev_string)
+			e2 = PR_Statement (&pr_opcodes[OP_NOT_S], e, 0);
+		else if (t == ev_entity)
+			e2 = PR_Statement (&pr_opcodes[OP_NOT_ENT], e, 0);
+		else if (t == ev_vector)
+			e2 = PR_Statement (&pr_opcodes[OP_NOT_V], e, 0);
+		else if (t == ev_function)
+			e2 = PR_Statement (&pr_opcodes[OP_NOT_FNC], e, 0);
+		else
+		{
+			e2 = NULL;		// shut up compiler warning;
+			PR_ParseError ("type mismatch for !");
+		}
+		return e2;
+	}
+	
+	if (PR_Check ("("))
+	{
+		e = PR_Expression (TOP_PRIORITY);
+		PR_Expect (")");
+		return e;
+	}
+	
+	return PR_ParseValue ();
+}
+
+/*
+==============
+PR_Expression
+==============
+*/
+
+def_t *PR_Expression (int priority)
+{
+	opcode_t	*op, *oldop;
+	def_t		*e, *e2;
+	etype_t		type_a, type_b, type_c;
+	
+	if (priority == 0)
+		return PR_Term ();
+		
+	e = PR_Expression (priority-1);
+		
+	while (1)
+	{
+		if (priority == 1 && PR_Check ("(") )
+			return PR_ParseFunctionCall (e);
+
+		for (op=pr_opcodes ; op->name ; op++)
+		{
+			if (op->priority != priority)
+				continue;
+			if (!PR_Check (op->name))
+				continue;
+			if ( op->right_associative )
+			{
+			// if last statement is an indirect, change it to an address of
+				if ( (unsigned)(statements[numstatements-1].op - OP_LOAD_F) < 6 )
+				{
+					statements[numstatements-1].op = OP_ADDRESS;
+					def_pointer.type->aux_type = e->type;
+					e->type = def_pointer.type;
+				}
+				e2 = PR_Expression (priority);
+			}
+			else
+				e2 = PR_Expression (priority-1);
+				
+		// type check
+			type_a = e->type->type;
+			type_b = e2->type->type;
+
+			if (op->name[0] == '.')// field access gets type from field
+			{
+				if (e2->type->aux_type)
+					type_c = e2->type->aux_type->type;
+				else
+					type_c = -1;	// not a field
+			}
+			else
+				type_c = ev_void;
+				
+			oldop = op;
+			while (type_a != op->type_a->type->type
+			|| type_b != op->type_b->type->type
+			|| (type_c != ev_void && type_c != op->type_c->type->type) )
+			{
+				op++;
+				if (!op->name || strcmp (op->name , oldop->name))
+					PR_ParseError ("type mismatch for %s", oldop->name);
+			}
+			
+			if (type_a == ev_pointer && type_b != e->type->aux_type->type)
+				PR_ParseError ("type mismatch for %s", op->name);
+			
+			
+			if (op->right_associative)
+				e = PR_Statement (op, e2, e);
+			else
+				e = PR_Statement (op, e, e2);
+			
+			if (type_c != ev_void)	// field access gets type from field
+				e->type = e2->type->aux_type;
+			
+			break;
+		}
+		if (!op->name)
+			break;	// next token isn't at this priority level
+	}
+	
+	return e;
+}
+
+
+/*
+============
+PR_ParseStatement
+
+============
+*/
+void PR_ParseStatement (void)
+{
+	def_t				*e;
+	dstatement_t		*patch1, *patch2;
+	
+	if (PR_Check ("{"))
+	{
+		do
+		{
+			PR_ParseStatement ();
+		} while (!PR_Check ("}"));
+		return;
+	}
+	
+	if (PR_Check("return"))
+	{
+		if (PR_Check (";"))
+		{
+			PR_Statement (&pr_opcodes[OP_RETURN], 0, 0);
+			return;
+		}
+		e = PR_Expression (TOP_PRIORITY);
+		PR_Expect (";");
+		PR_Statement (&pr_opcodes[OP_RETURN], e, 0);
+		return;		
+	}
+	
+	if (PR_Check("while"))
+	{
+		PR_Expect ("(");
+		patch2 = &statements[numstatements];
+		e = PR_Expression (TOP_PRIORITY);
+		PR_Expect (")");
+		patch1 = &statements[numstatements];
+		PR_Statement (&pr_opcodes[OP_IFNOT], e, 0);
+		PR_ParseStatement ();
+		junkdef.ofs = patch2 - &statements[numstatements];
+		PR_Statement (&pr_opcodes[OP_GOTO], &junkdef, 0);
+		patch1->b = &statements[numstatements] - patch1;
+		return;
+	}
+	
+	if (PR_Check("do"))
+	{
+		patch1 = &statements[numstatements];
+		PR_ParseStatement ();
+		PR_Expect ("while");
+		PR_Expect ("(");
+		e = PR_Expression (TOP_PRIORITY);
+		PR_Expect (")");
+		PR_Expect (";");
+		junkdef.ofs = patch1 - &statements[numstatements];
+		PR_Statement (&pr_opcodes[OP_IF], e, &junkdef);
+		return;
+	}
+	
+	if (PR_Check("local"))
+	{
+		PR_ParseDefs ();
+		locals_end = numpr_globals;
+		return;
+	}
+	
+	if (PR_Check("if"))
+	{
+		PR_Expect ("(");
+		e = PR_Expression (TOP_PRIORITY);
+		PR_Expect (")");
+		
+		patch1 = &statements[numstatements];
+		PR_Statement (&pr_opcodes[OP_IFNOT], e, 0);
+		
+		PR_ParseStatement ();
+		
+		if (PR_Check ("else"))
+		{
+			patch2 = &statements[numstatements];
+			PR_Statement (&pr_opcodes[OP_GOTO], 0, 0);
+			patch1->b = &statements[numstatements] - patch1;
+			PR_ParseStatement ();
+			patch2->a = &statements[numstatements] - patch2;
+		}
+		else
+			patch1->b = &statements[numstatements] - patch1;
+		
+		return;
+	}
+	
+	PR_Expression (TOP_PRIORITY);
+	PR_Expect (";");
+}
+
+
+/*
+==============
+PR_ParseState
+
+States are special functions made for convenience.  They automatically
+set frame, nextthink (implicitly), and think (allowing forward definitions).
+
+// void() name = [framenum, nextthink] {code}
+// expands to:
+// function void name ()
+// {
+//		self.frame=framenum;
+//		self.nextthink = time + 0.1;
+//		self.think = nextthink
+//		<code>
+// };
+==============
+*/
+void PR_ParseState (void)
+{
+	char	*name;
+	def_t	*s1, *def;
+	
+	if (pr_token_type != tt_immediate || pr_immediate_type != &type_float)
+		PR_ParseError ("state frame must be a number");
+	s1 = PR_ParseImmediate ();
+	
+	PR_Expect (",");
+
+	name = PR_ParseName ();
+	def = PR_GetDef (&type_function, name,0, true);
+		
+	PR_Expect ("]");
+	
+	PR_Statement (&pr_opcodes[OP_STATE], s1, def);
+}
+
+/*
+============
+PR_ParseImmediateStatements
+
+Parse a function body
+============
+*/
+function_t *PR_ParseImmediateStatements (type_t *type)
+{
+	int			i;
+	function_t	*f;
+	def_t		*defs[MAX_PARMS];
+	
+	f = malloc (sizeof(function_t));
+
+//
+// check for builtin function definition #1, #2, etc
+//
+	if (PR_Check ("#"))
+	{
+		if (pr_token_type != tt_immediate
+		|| pr_immediate_type != &type_float
+		|| pr_immediate._float != (int)pr_immediate._float)
+			PR_ParseError ("Bad builtin immediate");
+		f->builtin = (int)pr_immediate._float;
+		PR_Lex ();
+		return f;
+	}
+	
+	f->builtin = 0;
+//
+// define the parms
+//
+	for (i=0 ; i<type->num_parms ; i++)
+	{
+		defs[i] = PR_GetDef (type->parm_types[i], pr_parm_names[i], pr_scope, true);
+		f->parm_ofs[i] = defs[i]->ofs;
+		if (i > 0 && f->parm_ofs[i] < f->parm_ofs[i-1])
+			Error ("bad parm order");
+	}
+	
+	f->code = numstatements;
+
+//
+// check for a state opcode
+//
+	if (PR_Check ("["))
+		PR_ParseState ();
+		
+//
+// parse regular statements
+//
+	PR_Expect ("{");
+
+	while (!PR_Check("}"))
+		PR_ParseStatement ();
+	
+// emit an end of statements opcode
+	PR_Statement (pr_opcodes, 0,0);
+
+
+	return f;
+}
+
+/*
+============
+PR_GetDef
+
+If type is NULL, it will match any type
+If allocate is true, a new def will be allocated if it can't be found
+============
+*/
+def_t *PR_GetDef (type_t *type, char *name, def_t *scope, boolean allocate)
+{
+	def_t		*def;
+	char element[MAX_NAME];
+
+// see if the name is already in use
+	for (def = pr.def_head.next ; def ; def = def->next)
+		if (!strcmp(def->name,name) )
+		{
+			if ( def->scope && def->scope != scope)
+				continue;		// in a different function
+			
+			if (type && def->type != type)
+				PR_ParseError ("Type mismatch on redeclaration of %s",name);
+			return def;
+		}
+	
+	if (!allocate)
+		return NULL;
+		
+// allocate a new def
+	def = malloc (sizeof(def_t));
+	memset (def, 0, sizeof(*def));
+	def->next = NULL;
+	pr.def_tail->next = def;
+	pr.def_tail = def;
+	
+	def->name = malloc (strlen(name)+1);
+	strcpy (def->name, name);
+	def->type = type;
+
+	def->scope = scope;
+	
+	def->ofs = numpr_globals;
+	pr_global_defs[numpr_globals] = def;
+
+//
+// make automatic defs for the vectors elements
+// .origin can be accessed as .origin_x, .origin_y, and .origin_z
+//
+	if (type->type == ev_vector)
+	{		
+		sprintf (element, "%s_x",name);
+		PR_GetDef (&type_float, element, scope, true);
+		
+		sprintf (element, "%s_y",name);
+		PR_GetDef (&type_float, element, scope, true);
+		
+		sprintf (element, "%s_z",name);
+		PR_GetDef (&type_float, element, scope, true);
+	}
+	else
+		numpr_globals += type_size[type->type];
+
+	if (type->type == ev_field)
+	{
+		*(int *)&pr_globals[def->ofs] = pr.size_fields;
+		
+		if (type->aux_type->type == ev_vector)
+		{
+			sprintf (element, "%s_x",name);
+			PR_GetDef (&type_floatfield, element, scope, true);
+			
+			sprintf (element, "%s_y",name);
+			PR_GetDef (&type_floatfield, element, scope, true);
+			
+			sprintf (element, "%s_z",name);
+			PR_GetDef (&type_floatfield, element, scope, true);
+		}
+		else
+			pr.size_fields += type_size[type->aux_type->type];
+	}
+
+//	if (pr_dumpasm)
+//		PR_PrintOfs (def->ofs);
+		
+	return def;
+}
+
+/*
+================
+PR_ParseDefs
+
+Called at the outer layer and when a local statement is hit
+================
+*/
+void PR_ParseDefs (void)
+{
+	char		*name;
+	type_t		*type;
+	def_t		*def;
+	function_t	*f;
+	dfunction_t	*df;
+	int			i;
+	int			locals_start;
+
+	type = PR_ParseType ();
+	
+	if (pr_scope && (type->type == ev_field || type->type == ev_function) )
+		PR_ParseError ("Fields and functions must be global");
+		
+	do
+	{
+		name = PR_ParseName ();
+
+		def = PR_GetDef (type, name, pr_scope, true);
+		
+// check for an initialization
+		if ( PR_Check ("=") )
+		{
+			if (def->initialized)
+				PR_ParseError ("%s redeclared", name);
+	
+			if (type->type == ev_function)
+			{
+				locals_start = locals_end = numpr_globals;
+				pr_scope = def;
+				f = PR_ParseImmediateStatements (type);
+				pr_scope = NULL;
+				def->initialized = 1;
+				G_FUNCTION(def->ofs) = numfunctions;
+				f->def = def;
+//				if (pr_dumpasm)
+//					PR_PrintFunction (def);
+
+		// fill in the dfunction
+				df = &functions[numfunctions];
+				numfunctions++;
+				if (f->builtin)
+					df->first_statement = -f->builtin;
+				else
+					df->first_statement = f->code;
+				df->s_name = CopyString (f->def->name);
+				df->s_file = s_file;
+				df->numparms =  f->def->type->num_parms;
+				df->locals = locals_end - locals_start;
+				df->parm_start = locals_start;
+				for (i=0 ; i<df->numparms ; i++)
+					df->parm_size[i] = type_size[f->def->type->parm_types[i]->type];
+				
+				continue;
+			}
+			else if (pr_immediate_type != type)
+				PR_ParseError ("wrong immediate type for %s", name);
+	
+			def->initialized = 1;
+			memcpy (pr_globals + def->ofs, &pr_immediate, 4*type_size[pr_immediate_type->type]);
+			PR_Lex ();
+		}
+		
+	} while (PR_Check (","));
+
+	PR_Expect (";");
+}
+
+/*
+============
+PR_CompileFile
+
+compiles the 0 terminated text, adding defintions to the pr structure
+============
+*/
+boolean	PR_CompileFile (char *string, char *filename)
+{	
+	if (!pr.memory)
+		Error ("PR_CompileFile: Didn't clear");
+
+	PR_ClearGrabMacros ();	// clear the frame macros
+		
+	pr_file_p = string;
+	s_file = CopyString (filename);
+
+	pr_source_line = 0;
+	
+	PR_NewLine ();
+
+	PR_Lex ();	// read first token
+
+	while (pr_token_type != tt_eof)
+	{
+		if (setjmp(pr_parse_abort))
+		{
+			if (++pr_error_count > MAX_ERRORS)
+				return false;
+			PR_SkipToSemicolon ();
+			if (pr_token_type == tt_eof)
+				return false;		
+		}
+
+		pr_scope = NULL;	// outside all functions
+		
+		PR_ParseDefs ();
+	}
+	
+	return (pr_error_count == 0);
+}
+
+================
+File: pr_comp.h/pr_comp.h
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+// this file is shared by quake and qcc
+
+typedef int	func_t;
+typedef int	string_t;
+
+typedef enum {ev_void, ev_string, ev_float, ev_vector, ev_entity, ev_field, ev_function, ev_pointer} etype_t;
+
+
+#define	OFS_NULL		0
+#define	OFS_RETURN		1
+#define	OFS_PARM0		4		// leave 3 ofs for each parm to hold vectors
+#define	OFS_PARM1		7
+#define	OFS_PARM2		10
+#define	OFS_PARM3		13
+#define	OFS_PARM4		16
+#define	OFS_PARM5		19
+#define	OFS_PARM6		22
+#define	OFS_PARM7		25
+#define	RESERVED_OFS	28
+
+
+enum {
+	OP_DONE,
+	OP_MUL_F,
+	OP_MUL_V,
+	OP_MUL_FV,
+	OP_MUL_VF,
+	OP_DIV_F,
+	OP_ADD_F,
+	OP_ADD_V,
+	OP_SUB_F,
+	OP_SUB_V,
+	
+	OP_EQ_F,
+	OP_EQ_V,
+	OP_EQ_S,
+	OP_EQ_E,
+	OP_EQ_FNC,
+	
+	OP_NE_F,
+	OP_NE_V,
+	OP_NE_S,
+	OP_NE_E,
+	OP_NE_FNC,
+	
+	OP_LE,
+	OP_GE,
+	OP_LT,
+	OP_GT,
+
+	OP_LOAD_F,
+	OP_LOAD_V,
+	OP_LOAD_S,
+	OP_LOAD_ENT,
+	OP_LOAD_FLD,
+	OP_LOAD_FNC,
+
+	OP_ADDRESS,
+
+	OP_STORE_F,
+	OP_STORE_V,
+	OP_STORE_S,
+	OP_STORE_ENT,
+	OP_STORE_FLD,
+	OP_STORE_FNC,
+
+	OP_STOREP_F,
+	OP_STOREP_V,
+	OP_STOREP_S,
+	OP_STOREP_ENT,
+	OP_STOREP_FLD,
+	OP_STOREP_FNC,
+
+	OP_RETURN,
+	OP_NOT_F,
+	OP_NOT_V,
+	OP_NOT_S,
+	OP_NOT_ENT,
+	OP_NOT_FNC,
+	OP_IF,
+	OP_IFNOT,
+	OP_CALL0,
+	OP_CALL1,
+	OP_CALL2,
+	OP_CALL3,
+	OP_CALL4,
+	OP_CALL5,
+	OP_CALL6,
+	OP_CALL7,
+	OP_CALL8,
+	OP_STATE,
+	OP_GOTO,
+	OP_AND,
+	OP_OR,
+	
+	OP_BITAND,
+	OP_BITOR
+};
+
+
+typedef struct statement_s
+{
+	unsigned short	op;
+	short	a,b,c;
+} dstatement_t;
+
+typedef struct
+{
+	unsigned short	type;		// if DEF_SAVEGLOBGAL bit is set
+								// the variable needs to be saved in savegames
+	unsigned short	ofs;
+	int			s_name;
+} ddef_t;
+#define	DEF_SAVEGLOBGAL	(1<<15)
+
+#define	MAX_PARMS	8
+
+typedef struct
+{
+	int		first_statement;	// negative numbers are builtins
+	int		parm_start;
+	int		locals;				// total ints of parms + locals
+	
+	int		profile;		// runtime
+	
+	int		s_name;
+	int		s_file;			// source file defined in
+	
+	int		numparms;
+	byte	parm_size[MAX_PARMS];
+} dfunction_t;
+
+
+#define	PROG_VERSION	6
+typedef struct
+{
+	int		version;
+	int		crc;			// check of header file
+	
+	int		ofs_statements;
+	int		numstatements;	// statement 0 is an error
+
+	int		ofs_globaldefs;
+	int		numglobaldefs;
+	
+	int		ofs_fielddefs;
+	int		numfielddefs;
+	
+	int		ofs_functions;
+	int		numfunctions;	// function 0 is an empty
+	
+	int		ofs_strings;
+	int		numstrings;		// first string is a null string
+
+	int		ofs_globals;
+	int		numglobals;
+	
+	int		entityfields;
+} dprograms_t;
+
+================
+File: pr_lex.c/pr_lex.c
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+#include "qcc.h"
+
+int			pr_source_line;
+
+char		*pr_file_p;
+char		*pr_line_start;		// start of current source line
+
+int			pr_bracelevel;
+
+char		pr_token[2048];
+token_type_t	pr_token_type;
+type_t		*pr_immediate_type;
+eval_t		pr_immediate;
+
+char	pr_immediate_string[2048];
+
+int		pr_error_count;
+
+char	*pr_punctuation[] =
+// longer symbols must be before a shorter partial match
+{"&&", "||", "<=", ">=","==", "!=", ";", ",", "!", "*", "/", "(", ")", "-", "+", "=", "[", "]", "{", "}", "...", ".", "<", ">" , "#" , "&" , "|" , NULL};
+
+// simple types.  function types are dynamically allocated
+type_t	type_void = {ev_void, &def_void};
+type_t	type_string = {ev_string, &def_string};
+type_t	type_float = {ev_float, &def_float};
+type_t	type_vector = {ev_vector, &def_vector};
+type_t	type_entity = {ev_entity, &def_entity};
+type_t	type_field = {ev_field, &def_field};
+type_t	type_function = {ev_function, &def_function,NULL,&type_void};
+// type_function is a void() function used for state defs
+type_t	type_pointer = {ev_pointer, &def_pointer};
+
+type_t	type_floatfield = {ev_field, &def_field, NULL, &type_float};
+
+int		type_size[8] = {1,1,1,3,1,1,1,1};
+
+def_t	def_void = {&type_void, "temp"};
+def_t	def_string = {&type_string, "temp"};
+def_t	def_float = {&type_float, "temp"};
+def_t	def_vector = {&type_vector, "temp"};
+def_t	def_entity = {&type_entity, "temp"};
+def_t	def_field = {&type_field, "temp"};
+def_t	def_function = {&type_function, "temp"};
+def_t	def_pointer = {&type_pointer, "temp"};
+
+def_t	def_ret, def_parms[MAX_PARMS];
+
+def_t	*def_for_type[8] = {&def_void, &def_string, &def_float, &def_vector, &def_entity, &def_field, &def_function, &def_pointer};
+
+void PR_LexWhitespace (void);
+
+
+/*
+==============
+PR_PrintNextLine
+==============
+*/
+void PR_PrintNextLine (void)
+{
+	char	*t;
+
+	printf ("%3i:",pr_source_line);
+	for (t=pr_line_start ; *t && *t != '\n' ; t++)
+		printf ("%c",*t);
+	printf ("\n");
+}
+
+/*
+==============
+PR_NewLine
+
+Call at start of file and when *pr_file_p == '\n'
+==============
+*/
+void PR_NewLine (void)
+{
+	boolean	m;
+	
+	if (*pr_file_p == '\n')
+	{
+		pr_file_p++;
+		m = true;
+	}
+	else
+		m = false;
+
+	pr_source_line++;
+	pr_line_start = pr_file_p;
+
+//	if (pr_dumpasm)
+//		PR_PrintNextLine ();
+	if (m)
+		pr_file_p--;
+}
+
+/*
+==============
+PR_LexString
+
+Parses a quoted string
+==============
+*/
+void PR_LexString (void)
+{
+	int		c;
+	int		len;
+	
+	len = 0;
+	pr_file_p++;
+	do
+	{
+		c = *pr_file_p++;
+		if (!c)
+			PR_ParseError ("EOF inside quote");
+		if (c=='\n')
+			PR_ParseError ("newline inside quote");
+		if (c=='\\')
+		{	// escape char
+			c = *pr_file_p++;
+			if (!c)
+				PR_ParseError ("EOF inside quote");
+			if (c == 'n')
+				c = '\n';
+			else if (c == '"')
+				c = '"';
+			else
+				PR_ParseError ("Unknown escape char");
+		}
+		else if (c=='\"')
+		{
+			pr_token[len] = 0;
+			pr_token_type = tt_immediate;
+			pr_immediate_type = &type_string;
+			strcpy (pr_immediate_string, pr_token);
+			return;
+		}
+		pr_token[len] = c;
+		len++;
+	} while (1);
+}
+
+/*
+==============
+PR_LexNumber
+==============
+*/
+float PR_LexNumber (void)
+{
+	int		c;
+	int		len;
+	
+	len = 0;
+	c = *pr_file_p;
+	do
+	{
+		pr_token[len] = c;
+		len++;
+		pr_file_p++;
+		c = *pr_file_p;
+	} while ((c >= '0' && c<= '9') || c == '.');
+	pr_token[len] = 0;
+	return atof (pr_token);
+}
+
+/*
+==============
+PR_LexVector
+
+Parses a single quoted vector
+==============
+*/
+void PR_LexVector (void)
+{
+	int		i;
+	
+	pr_file_p++;
+	pr_token_type = tt_immediate;
+	pr_immediate_type = &type_vector;
+	for (i=0 ; i<3 ; i++)
+	{
+		pr_immediate.vector[i] = PR_LexNumber ();
+		PR_LexWhitespace ();
+	}
+	if (*pr_file_p != '\'')
+		PR_ParseError ("Bad vector");
+	pr_file_p++;
+}
+
+/*
+==============
+PR_LexName
+
+Parses an identifier
+==============
+*/
+void PR_LexName (void)
+{
+	int		c;
+	int		len;
+	
+	len = 0;
+	c = *pr_file_p;
+	do
+	{
+		pr_token[len] = c;
+		len++;
+		pr_file_p++;
+		c = *pr_file_p;
+	} while ( (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' 
+	|| (c >= '0' && c <= '9'));
+	pr_token[len] = 0;
+	pr_token_type = tt_name;
+}
+
+/*
+==============
+PR_LexPunctuation
+==============
+*/
+void PR_LexPunctuation (void)
+{
+	int		i;
+	int		len;
+	char	*p;
+	
+	pr_token_type = tt_punct;
+	
+	for (i=0 ; (p = pr_punctuation[i]) != NULL ; i++)
+	{
+		len = strlen(p);
+		if (!strncmp(p, pr_file_p, len) )
+		{
+			strcpy (pr_token, p);
+			if (p[0] == '{')
+				pr_bracelevel++;
+			else if (p[0] == '}')
+				pr_bracelevel--;
+			pr_file_p += len;
+			return;
+		}
+	}
+	
+	PR_ParseError ("Unknown punctuation");
+}
+
+		
+/*
+==============
+PR_LexWhitespace
+==============
+*/
+void PR_LexWhitespace (void)
+{
+	int		c;
+	
+	while (1)
+	{
+	// skip whitespace
+		while ( (c = *pr_file_p) <= ' ')
+		{
+			if (c=='\n')
+				PR_NewLine ();
+			if (c == 0)
+				return;		// end of file
+			pr_file_p++;
+		}
+		
+	// skip // comments
+		if (c=='/' && pr_file_p[1] == '/')
+		{
+			while (*pr_file_p && *pr_file_p != '\n')
+				pr_file_p++;
+			PR_NewLine();
+			pr_file_p++;
+			continue;
+		}
+		
+	// skip /* */ comments
+		if (c=='/' && pr_file_p[1] == '*')
+		{
+			do
+			{
+				pr_file_p++;
+				if (pr_file_p[0]=='\n')
+					PR_NewLine();
+				if (pr_file_p[1] == 0)
+					return;
+			} while (pr_file_p[-1] != '*' || pr_file_p[0] != '/');
+			pr_file_p++;
+			continue;
+		}
+		
+		break;		// a real character has been found
+	}
+}
+
+//============================================================================
+
+#define	MAX_FRAMES	256
+
+char	pr_framemacros[MAX_FRAMES][16];
+int		pr_nummacros;
+
+void PR_ClearGrabMacros (void)
+{
+	pr_nummacros = 0;
+}
+
+void PR_FindMacro (void)
+{
+	int		i;
+	
+	for (i=0 ; i<pr_nummacros ; i++)
+		if (!strcmp (pr_token, pr_framemacros[i]))
+		{
+			sprintf (pr_token,"%d", i);
+			pr_token_type = tt_immediate;
+			pr_immediate_type = &type_float;
+			pr_immediate._float = i;
+			return;
+		}
+	PR_ParseError ("Unknown frame macro $%s", pr_token);
+}
+
+// just parses text, returning false if an eol is reached
+boolean PR_SimpleGetToken (void)
+{
+	int		c;
+	int		i;
+	
+// skip whitespace
+	while ( (c = *pr_file_p) <= ' ')
+	{
+		if (c=='\n' || c == 0)
+			return false;
+		pr_file_p++;
+	}
+	
+	i = 0;
+	while ( (c = *pr_file_p) > ' ' && c != ',' && c != ';')
+	{
+		pr_token[i] = c;
+		i++;
+		pr_file_p++;
+	}
+	pr_token[i] = 0;
+	return true;
+}
+
+void PR_ParseFrame (void)
+{
+	while (PR_SimpleGetToken ())
+	{
+		strcpy (pr_framemacros[pr_nummacros], pr_token);
+		pr_nummacros++;
+	}
+}
+
+/*
+==============
+PR_LexGrab
+
+Deals with counting sequence numbers and replacing frame macros
+==============
+*/
+void PR_LexGrab (void)
+{	
+	pr_file_p++;	// skip the $
+	if (!PR_SimpleGetToken ())
+		PR_ParseError ("hanging $");
+	
+// check for $frame
+	if (!strcmp (pr_token, "frame"))
+	{
+		PR_ParseFrame ();
+		PR_Lex ();
+	}
+// ignore other known $commands
+	else if (!strcmp (pr_token, "cd")
+	|| !strcmp (pr_token, "origin")
+	|| !strcmp (pr_token, "base")
+	|| !strcmp (pr_token, "flags")
+	|| !strcmp (pr_token, "scale")
+	|| !strcmp (pr_token, "skin") )
+	{	// skip to end of line
+		while (PR_SimpleGetToken ())
+		;
+		PR_Lex ();
+	}
+// look for a frame name macro
+	else
+		PR_FindMacro ();
+}
+
+//============================================================================
+
+/*
+==============
+PR_Lex
+
+Sets pr_token, pr_token_type, and possibly pr_immediate and pr_immediate_type
+==============
+*/
+void PR_Lex (void)
+{
+	int		c;
+
+	pr_token[0] = 0;
+	
+	if (!pr_file_p)
+	{
+		pr_token_type = tt_eof;
+		return;
+	}
+
+	PR_LexWhitespace ();
+
+	c = *pr_file_p;
+		
+	if (!c)
+	{
+		pr_token_type = tt_eof;
+		return;
+	}
+
+// handle quoted strings as a unit
+	if (c == '\"')
+	{
+		PR_LexString ();
+		return;
+	}
+
+// handle quoted vectors as a unit
+	if (c == '\'')
+	{
+		PR_LexVector ();
+		return;
+	}
+
+// if the first character is a valid identifier, parse until a non-id
+// character is reached
+	if ( (c >= '0' && c <= '9') || ( c=='-' && pr_file_p[1]>='0' && pr_file_p[1] <='9') )
+	{
+		pr_token_type = tt_immediate;
+		pr_immediate_type = &type_float;
+		pr_immediate._float = PR_LexNumber ();
+		return;
+	}
+	
+	if ( (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' )
+	{
+		PR_LexName ();
+		return;
+	}
+	
+	if (c == '$')
+	{
+		PR_LexGrab ();
+		return;
+	}
+	
+// parse symbol strings until a non-symbol is found
+	PR_LexPunctuation ();
+}
+
+//=============================================================================
+
+/*
+============
+PR_ParseError
+
+Aborts the current file load
+============
+*/
+void PR_ParseError (char *error, ...)
+{
+	va_list		argptr;
+	char		string[1024];
+
+	va_start (argptr,error);
+	vsprintf (string,error,argptr);
+	va_end (argptr);
+
+	printf ("%s:%i:%s\n", strings + s_file, pr_source_line, string);
+	
+	longjmp (pr_parse_abort, 1);
+}
+
+
+/*
+=============
+PR_Expect
+
+Issues an error if the current token isn't equal to string
+Gets the next token
+=============
+*/
+void PR_Expect (char *string)
+{
+	if (strcmp (string, pr_token))
+		PR_ParseError ("expected %s, found %s",string, pr_token);
+	PR_Lex ();
+}
+
+
+/*
+=============
+PR_Check
+
+Returns true and gets the next token if the current token equals string
+Returns false and does nothing otherwise
+=============
+*/
+boolean PR_Check (char *string)
+{
+	if (strcmp (string, pr_token))
+		return false;
+		
+	PR_Lex ();
+	return true;
+}
+
+/*
+============
+PR_ParseName
+
+Checks to see if the current token is a valid name
+============
+*/
+char *PR_ParseName (void)
+{
+	static char	ident[MAX_NAME];
+	
+	if (pr_token_type != tt_name)
+		PR_ParseError ("not a name");
+	if (strlen(pr_token) >= MAX_NAME-1)
+		PR_ParseError ("name too long");
+	strcpy (ident, pr_token);
+	PR_Lex ();
+	
+	return ident;
+}
+
+/*
+============
+PR_FindType
+
+Returns a preexisting complex type that matches the parm, or allocates
+a new one and copies it out.
+============
+*/
+type_t *PR_FindType (type_t *type)
+{
+	def_t	*def;
+	type_t	*check;
+	int		i;
+	
+	for (check = pr.types ; check ; check = check->next)
+	{
+		if (check->type != type->type
+		|| check->aux_type != type->aux_type
+		|| check->num_parms != type->num_parms)
+			continue;
+	
+		for (i=0 ; i< type->num_parms ; i++)
+			if (check->parm_types[i] != type->parm_types[i])
+				break;
+			
+		if (i == type->num_parms)
+			return check;	
+	}
+	
+// allocate a new one
+	check = malloc (sizeof (*check));
+	*check = *type;
+	check->next = pr.types;
+	pr.types = check;
+	
+// allocate a generic def for the type, so fields can reference it
+	def = malloc (sizeof(def_t));
+	def->name = "COMPLEX TYPE";
+	def->type = check;
+	check->def = def;
+	return check;
+}
+
+
+/*
+============
+PR_SkipToSemicolon
+
+For error recovery, also pops out of nested braces
+============
+*/
+void PR_SkipToSemicolon (void)
+{
+	do
+	{
+		if (!pr_bracelevel && PR_Check (";"))
+			return;
+		PR_Lex ();
+	} while (pr_token[0]);	// eof will return a null token
+}
+
+
+/*
+============
+PR_ParseType
+
+Parses a variable type, including field and functions types
+============
+*/
+char	pr_parm_names[MAX_PARMS][MAX_NAME];
+
+type_t *PR_ParseType (void)
+{
+	type_t	new;
+	type_t	*type;
+	char	*name;
+	
+	if (PR_Check ("."))
+	{
+		memset (&new, 0, sizeof(new));
+		new.type = ev_field;
+		new.aux_type = PR_ParseType ();
+		return PR_FindType (&new);
+	}
+	
+	if (!strcmp (pr_token, "float") )
+		type = &type_float;
+	else if (!strcmp (pr_token, "vector") )
+		type = &type_vector;
+	else if (!strcmp (pr_token, "float") )
+		type = &type_float;
+	else if (!strcmp (pr_token, "entity") )
+		type = &type_entity;
+	else if (!strcmp (pr_token, "string") )
+		type = &type_string;
+	else if (!strcmp (pr_token, "void") )
+		type = &type_void;
+	else
+	{
+		PR_ParseError ("\"%s\" is not a type", pr_token);
+		type = &type_float;	// shut up compiler warning
+	}
+	PR_Lex ();
+	
+	if (!PR_Check ("("))
+		return type;
+	
+// function type
+	memset (&new, 0, sizeof(new));
+	new.type = ev_function;
+	new.aux_type = type;	// return type
+	new.num_parms = 0;
+	if (!PR_Check (")"))
+	{
+		if (PR_Check ("..."))
+			new.num_parms = -1;	// variable args
+		else
+			do
+			{
+				type = PR_ParseType ();
+				name = PR_ParseName ();
+				strcpy (pr_parm_names[new.num_parms], name);
+				new.parm_types[new.num_parms] = type;
+				new.num_parms++;
+			} while (PR_Check (","));
+	
+		PR_Expect (")");
+	}
+	
+	return PR_FindType (&new);
+}
+
+================
+File: progdefs.h/progdefs.h
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+/* file generated by qcc, do not modify */
+
+typedef struct
+{	int	pad[28];
+	int	self;
+	int	other;
+	int	world;
+	float	time;
+	float	frametime;
+	float	force_retouch;
+	string_t	mapname;
+	float	deathmatch;
+	float	coop;
+	float	teamplay;
+	float	serverflags;
+	float	total_secrets;
+	float	total_monsters;
+	float	found_secrets;
+	float	killed_monsters;
+	float	parm1;
+	float	parm2;
+	float	parm3;
+	float	parm4;
+	float	parm5;
+	float	parm6;
+	float	parm7;
+	float	parm8;
+	float	parm9;
+	float	parm10;
+	float	parm11;
+	float	parm12;
+	float	parm13;
+	float	parm14;
+	float	parm15;
+	float	parm16;
+	vec3_t	v_forward;
+	vec3_t	v_up;
+	vec3_t	v_right;
+	float	trace_allsolid;
+	float	trace_startsolid;
+	float	trace_fraction;
+	vec3_t	trace_endpos;
+	vec3_t	trace_plane_normal;
+	float	trace_plane_dist;
+	int	trace_ent;
+	float	trace_inopen;
+	float	trace_inwater;
+	int	msg_entity;
+	func_t	main;
+	func_t	StartFrame;
+	func_t	PlayerPreThink;
+	func_t	PlayerPostThink;
+	func_t	ClientKill;
+	func_t	ClientConnect;
+	func_t	PutClientInServer;
+	func_t	ClientDisconnect;
+	func_t	SetNewParms;
+	func_t	SetChangeParms;
+} globalvars_t;
+
+typedef struct
+{
+	float	modelindex;
+	vec3_t	absmin;
+	vec3_t	absmax;
+	float	ltime;
+	float	movetype;
+	float	solid;
+	vec3_t	origin;
+	vec3_t	oldorigin;
+	vec3_t	velocity;
+	vec3_t	angles;
+	vec3_t	avelocity;
+	vec3_t	punchangle;
+	string_t	classname;
+	string_t	model;
+	float	frame;
+	float	skin;
+	float	effects;
+	vec3_t	mins;
+	vec3_t	maxs;
+	vec3_t	size;
+	func_t	touch;
+	func_t	use;
+	func_t	think;
+	func_t	blocked;
+	float	nextthink;
+	int	groundentity;
+	float	health;
+	float	frags;
+	float	weapon;
+	string_t	weaponmodel;
+	float	weaponframe;
+	float	currentammo;
+	float	ammo_shells;
+	float	ammo_nails;
+	float	ammo_rockets;
+	float	ammo_cells;
+	float	items;
+	float	takedamage;
+	int	chain;
+	float	deadflag;
+	vec3_t	view_ofs;
+	float	button0;
+	float	button1;
+	float	button2;
+	float	impulse;
+	float	fixangle;
+	vec3_t	v_angle;
+	float	idealpitch;
+	string_t	netname;
+	int	enemy;
+	float	flags;
+	float	colormap;
+	float	team;
+	float	max_health;
+	float	teleport_time;
+	float	armortype;
+	float	armorvalue;
+	float	waterlevel;
+	float	watertype;
+	float	ideal_yaw;
+	float	yaw_speed;
+	int	aiment;
+	int	goalentity;
+	float	spawnflags;
+	string_t	target;
+	string_t	targetname;
+	float	dmg_take;
+	float	dmg_save;
+	int	dmg_inflictor;
+	int	owner;
+	vec3_t	movedir;
+	string_t	message;
+	float	sounds;
+	string_t	noise;
+	string_t	noise1;
+	string_t	noise2;
+	string_t	noise3;
+} entvars_t;
+
+#define PROGHEADER_CRC 5927
+
+================
+File: qcc.c/qcc.c
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+#include "qcc.h"
+
+
+char		destfile[1024];
+
+float		pr_globals[MAX_REGS];
+int			numpr_globals;
+
+char		strings[MAX_STRINGS];
+int			strofs;
+
+dstatement_t	statements[MAX_STATEMENTS];
+int			numstatements;
+int			statement_linenums[MAX_STATEMENTS];
+
+dfunction_t	functions[MAX_FUNCTIONS];
+int			numfunctions;
+
+ddef_t		globals[MAX_GLOBALS];
+int			numglobaldefs;
+
+ddef_t		fields[MAX_FIELDS];
+int			numfielddefs;
+
+char		precache_sounds[MAX_SOUNDS][MAX_DATA_PATH];
+int			precache_sounds_block[MAX_SOUNDS];
+int			numsounds;
+
+char		precache_models[MAX_MODELS][MAX_DATA_PATH];
+int			precache_models_block[MAX_SOUNDS];
+int			nummodels;
+
+char		precache_files[MAX_FILES][MAX_DATA_PATH];
+int			precache_files_block[MAX_SOUNDS];
+int			numfiles;
+
+
+/*
+=================
+BspModels
+
+Runs qbsp and light on all of the models with a .bsp extension
+=================
+*/
+void BspModels (void)
+{
+	int		p;
+	char	*gamedir;
+	int		i;
+	char	*m;
+	char	cmd[1024];
+	char	name[256];
+
+	p = CheckParm ("-bspmodels");
+	if (!p)
+		return;
+	if (p == myargc-1)
+		Error ("-bspmodels must preceed a game directory");
+	gamedir = myargv[p+1];
+	
+	for (i=0 ; i<nummodels ; i++)
+	{
+		m = precache_models[i];
+		if (strcmp(m+strlen(m)-4, ".bsp"))
+			continue;
+		strcpy (name, m);
+		name[strlen(m)-4] = 0;
+		sprintf (cmd, "qbsp %s/%s ; light -extra %s/%s", gamedir, name, gamedir, name);
+		system (cmd);
+	}
+}
+
+// CopyString returns an offset from the string heap
+int	CopyString (char *str)
+{
+	int		old;
+	
+	old = strofs;
+	strcpy (strings+strofs, str);
+	strofs += strlen(str)+1;
+	return old;
+}
+
+void PrintStrings (void)
+{
+	int		i, l, j;
+	
+	for (i=0 ; i<strofs ; i += l)
+	{
+		l = strlen(strings+i) + 1;
+		printf ("%5i : ",i);
+		for (j=0 ; j<l ; j++)
+		{
+			if (strings[i+j] == '\n')
+			{
+				putchar ('\\');
+				putchar ('n');
+			}
+			else
+				putchar (strings[i+j]);
+		}
+		printf ("\n");
+	}
+}
+
+
+void PrintFunctions (void)
+{
+	int		i,j;
+	dfunction_t	*d;
+	
+	for (i=0 ; i<numfunctions ; i++)
+	{
+		d = &functions[i];
+		printf ("%s : %s : %i %i (", strings + d->s_file, strings + d->s_name, d->first_statement, d->parm_start);
+		for (j=0 ; j<d->numparms ; j++)
+			printf ("%i ",d->parm_size[j]);
+		printf (")\n");
+	}
+}
+
+void PrintFields (void)
+{
+	int		i;
+	ddef_t	*d;
+	
+	for (i=0 ; i<numfielddefs ; i++)
+	{
+		d = &fields[i];
+		printf ("%5i : (%i) %s\n", d->ofs, d->type, strings + d->s_name);
+	}
+}
+
+void PrintGlobals (void)
+{
+	int		i;
+	ddef_t	*d;
+	
+	for (i=0 ; i<numglobaldefs ; i++)
+	{
+		d = &globals[i];
+		printf ("%5i : (%i) %s\n", d->ofs, d->type, strings + d->s_name);
+	}
+}
+
+
+void InitData (void)
+{
+	int		i;
+	
+	numstatements = 1;
+	strofs = 1;
+	numfunctions = 1;
+	numglobaldefs = 1;
+	numfielddefs = 1;
+	
+	def_ret.ofs = OFS_RETURN;
+	for (i=0 ; i<MAX_PARMS ; i++)
+		def_parms[i].ofs = OFS_PARM0 + 3*i;
+}
+
+
+void WriteData (int crc)
+{
+	def_t		*def;
+	ddef_t		*dd;
+	dprograms_t	progs;
+	int			h;
+	int			i;
+
+	for (def = pr.def_head.next ; def ; def = def->next)
+	{
+		if (def->type->type == ev_function)
+		{
+//			df = &functions[numfunctions];
+//			numfunctions++;
+
+		}
+		else if (def->type->type == ev_field)
+		{
+			dd = &fields[numfielddefs];
+			numfielddefs++;
+			dd->type = def->type->aux_type->type;
+			dd->s_name = CopyString (def->name);
+			dd->ofs = G_INT(def->ofs);
+		}
+		dd = &globals[numglobaldefs];
+		numglobaldefs++;
+		dd->type = def->type->type;
+		if ( !def->initialized
+		&& def->type->type != ev_function
+		&& def->type->type != ev_field
+		&& def->scope == NULL)
+			dd->type |= DEF_SAVEGLOBGAL;
+		dd->s_name = CopyString (def->name);
+		dd->ofs = def->ofs;
+	}
+
+//PrintStrings ();
+//PrintFunctions ();
+//PrintFields ();
+//PrintGlobals ();
+strofs = (strofs+3)&~3;
+
+	printf ("%6i strofs\n", strofs);
+	printf ("%6i numstatements\n", numstatements);
+	printf ("%6i numfunctions\n", numfunctions);
+	printf ("%6i numglobaldefs\n", numglobaldefs);
+	printf ("%6i numfielddefs\n", numfielddefs);
+	printf ("%6i numpr_globals\n", numpr_globals);
+	
+	h = SafeOpenWrite (destfile);
+	SafeWrite (h, &progs, sizeof(progs));
+
+	progs.ofs_strings = lseek (h, 0, SEEK_CUR);
+	progs.numstrings = strofs;
+	SafeWrite (h, strings, strofs);
+
+	progs.ofs_statements = lseek (h, 0, SEEK_CUR);
+	progs.numstatements = numstatements;
+	for (i=0 ; i<numstatements ; i++)
+	{
+		statements[i].op = LittleShort(statements[i].op);
+		statements[i].a = LittleShort(statements[i].a);
+		statements[i].b = LittleShort(statements[i].b);
+		statements[i].c = LittleShort(statements[i].c);
+	}
+	SafeWrite (h, statements, numstatements*sizeof(dstatement_t));
+
+	progs.ofs_functions = lseek (h, 0, SEEK_CUR);
+	progs.numfunctions = numfunctions;
+	for (i=0 ; i<numfunctions ; i++)
+	{
+	functions[i].first_statement = LittleLong (functions[i].first_statement);
+	functions[i].parm_start = LittleLong (functions[i].parm_start);
+	functions[i].s_name = LittleLong (functions[i].s_name);
+	functions[i].s_file = LittleLong (functions[i].s_file);
+	functions[i].numparms = LittleLong (functions[i].numparms);
+	functions[i].locals = LittleLong (functions[i].locals);
+	}	
+	SafeWrite (h, functions, numfunctions*sizeof(dfunction_t));
+
+	progs.ofs_globaldefs = lseek (h, 0, SEEK_CUR);
+	progs.numglobaldefs = numglobaldefs;
+	for (i=0 ; i<numglobaldefs ; i++)
+	{
+		globals[i].type = LittleShort (globals[i].type);
+		globals[i].ofs = LittleShort (globals[i].ofs);
+		globals[i].s_name = LittleLong (globals[i].s_name);
+	}
+	SafeWrite (h, globals, numglobaldefs*sizeof(ddef_t));
+
+	progs.ofs_fielddefs = lseek (h, 0, SEEK_CUR);
+	progs.numfielddefs = numfielddefs;
+	for (i=0 ; i<numfielddefs ; i++)
+	{
+		fields[i].type = LittleShort (fields[i].type);
+		fields[i].ofs = LittleShort (fields[i].ofs);
+		fields[i].s_name = LittleLong (fields[i].s_name);
+	}
+	SafeWrite (h, fields, numfielddefs*sizeof(ddef_t));
+
+	progs.ofs_globals = lseek (h, 0, SEEK_CUR);
+	progs.numglobals = numpr_globals;
+	for (i=0 ; i<numpr_globals ; i++)
+		((int *)pr_globals)[i] = LittleLong (((int *)pr_globals)[i]);
+	SafeWrite (h, pr_globals, numpr_globals*4);
+
+	printf ("%6i TOTAL SIZE\n", (int)lseek (h, 0, SEEK_CUR));	
+
+	progs.entityfields = pr.size_fields;
+
+	progs.version = PROG_VERSION;
+	progs.crc = crc;
+	
+// byte swap the header and write it out
+	for (i=0 ; i<sizeof(progs)/4 ; i++)
+		((int *)&progs)[i] = LittleLong ( ((int *)&progs)[i] );		
+	lseek (h, 0, SEEK_SET);
+	SafeWrite (h, &progs, sizeof(progs));
+	close (h);
+	
+}
+
+
+
+/*
+===============
+PR_String
+
+Returns a string suitable for printing (no newlines, max 60 chars length)
+===============
+*/
+char *PR_String (char *string)
+{
+	static char buf[80];
+	char	*s;
+	
+	s = buf;
+	*s++ = '"';
+	while (string && *string)
+	{
+		if (s == buf + sizeof(buf) - 2)
+			break;
+		if (*string == '\n')
+		{
+			*s++ = '\\';
+			*s++ = 'n';
+		}
+		else if (*string == '"')
+		{
+			*s++ = '\\';
+			*s++ = '"';
+		}
+		else
+			*s++ = *string;
+		string++;
+		if (s - buf > 60)
+		{
+			*s++ = '.';
+			*s++ = '.';
+			*s++ = '.';
+			break;
+		}
+	}
+	*s++ = '"';
+	*s++ = 0;
+	return buf;
+}
+
+
+
+def_t	*PR_DefForFieldOfs (gofs_t ofs)
+{
+	def_t	*d;
+	
+	for (d=pr.def_head.next ; d ; d=d->next)
+	{
+		if (d->type->type != ev_field)
+			continue;
+		if (*((int *)&pr_globals[d->ofs]) == ofs)
+			return d;
+	}
+	Error ("PR_DefForFieldOfs: couldn't find %i",ofs);
+	return NULL;
+}
+
+/*
+============
+PR_ValueString
+
+Returns a string describing *data in a type specific manner
+=============
+*/
+char *PR_ValueString (etype_t type, void *val)
+{
+	static char	line[256];
+	def_t		*def;
+	dfunction_t	*f;
+	
+	switch (type)
+	{
+	case ev_string:
+		sprintf (line, "%s", PR_String(strings + *(int *)val));
+		break;
+	case ev_entity:	
+		sprintf (line, "entity %i", *(int *)val);
+		break;
+	case ev_function:
+		f = functions + *(int *)val;
+		if (!f)
+			sprintf (line, "undefined function");
+		else
+			sprintf (line, "%s()", strings + f->s_name);
+		break;
+	case ev_field:
+		def = PR_DefForFieldOfs ( *(int *)val );
+		sprintf (line, ".%s", def->name);
+		break;
+	case ev_void:
+		sprintf (line, "void");
+		break;
+	case ev_float:
+		sprintf (line, "%5.1f", *(float *)val);
+		break;
+	case ev_vector:
+		sprintf (line, "'%5.1f %5.1f %5.1f'", ((float *)val)[0], ((float *)val)[1], ((float *)val)[2]);
+		break;
+	case ev_pointer:
+		sprintf (line, "pointer");
+		break;
+	default:
+		sprintf (line, "bad type %i", type);
+		break;
+	}
+	
+	return line;
+}
+
+/*
+============
+PR_GlobalString
+
+Returns a string with a description and the contents of a global,
+padded to 20 field width
+============
+*/
+char *PR_GlobalStringNoContents (gofs_t ofs)
+{
+	int		i;
+	def_t	*def;
+	void	*val;
+	static char	line[128];
+	
+	val = (void *)&pr_globals[ofs];
+	def = pr_global_defs[ofs];
+	if (!def)
+//		Error ("PR_GlobalString: no def for %i", ofs);
+		sprintf (line,"%i(???)", ofs);
+	else
+		sprintf (line,"%i(%s)", ofs, def->name);
+	
+	i = strlen(line);
+	for ( ; i<16 ; i++)
+		strcat (line," ");
+	strcat (line," ");
+		
+	return line;
+}
+
+char *PR_GlobalString (gofs_t ofs)
+{
+	char	*s;
+	int		i;
+	def_t	*def;
+	void	*val;
+	static char	line[128];
+	
+	val = (void *)&pr_globals[ofs];
+	def = pr_global_defs[ofs];
+	if (!def)
+		return PR_GlobalStringNoContents(ofs);
+	if (def->initialized && def->type->type != ev_function)
+	{
+		s = PR_ValueString (def->type->type, &pr_globals[ofs]);
+		sprintf (line,"%i(%s)", ofs, s);
+	}
+	else
+		sprintf (line,"%i(%s)", ofs, def->name);
+	
+	i = strlen(line);
+	for ( ; i<16 ; i++)
+		strcat (line," ");
+	strcat (line," ");
+		
+	return line;
+}
+
+/*
+============
+PR_PrintOfs
+============
+*/
+void PR_PrintOfs (gofs_t ofs)
+{
+	printf ("%s\n",PR_GlobalString(ofs));
+}
+
+/*
+=================
+PR_PrintStatement
+=================
+*/
+void PR_PrintStatement (dstatement_t *s)
+{
+	int		i;
+	
+	printf ("%4i : %4i : %s ", (int)(s - statements), statement_linenums[s-statements], pr_opcodes[s->op].opname);
+	i = strlen(pr_opcodes[s->op].opname);
+	for ( ; i<10 ; i++)
+		printf (" ");
+		
+	if (s->op == OP_IF || s->op == OP_IFNOT)
+		printf ("%sbranch %i",PR_GlobalString(s->a),s->b);
+	else if (s->op == OP_GOTO)
+	{
+		printf ("branch %i",s->a);
+	}
+	else if ( (unsigned)(s->op - OP_STORE_F) < 6)
+	{
+		printf ("%s",PR_GlobalString(s->a));
+		printf ("%s", PR_GlobalStringNoContents(s->b));
+	}
+	else
+	{
+		if (s->a)
+			printf ("%s",PR_GlobalString(s->a));
+		if (s->b)
+			printf ("%s",PR_GlobalString(s->b));
+		if (s->c)
+			printf ("%s", PR_GlobalStringNoContents(s->c));
+	}
+	printf ("\n");
+}
+
+
+/*
+============
+PR_PrintDefs
+============
+*/
+void PR_PrintDefs (void)
+{
+	def_t	*d;
+	
+	for (d=pr.def_head.next ; d ; d=d->next)
+		PR_PrintOfs (d->ofs);
+}
+
+
+/*
+==============
+PR_BeginCompilation
+
+called before compiling a batch of files, clears the pr struct
+==============
+*/
+void	PR_BeginCompilation (void *memory, int memsize)
+{
+	int		i;
+	
+	pr.memory = memory;
+	pr.max_memory = memsize;
+	
+	numpr_globals = RESERVED_OFS;
+	pr.def_tail = &pr.def_head;
+	
+	for (i=0 ; i<RESERVED_OFS ; i++)
+		pr_global_defs[i] = &def_void;
+		
+// link the function type in so state forward declarations match proper type
+	pr.types = &type_function;
+	type_function.next = NULL;
+	pr_error_count = 0;
+}
+
+/*
+==============
+PR_FinishCompilation
+
+called after all files are compiled to check for errors
+Returns false if errors were detected.
+==============
+*/
+boolean	PR_FinishCompilation (void)
+{
+	def_t		*d;
+	boolean	errors;
+	
+	errors = false;
+	
+// check to make sure all functions prototyped have code
+	for (d=pr.def_head.next ; d ; d=d->next)
+	{
+		if (d->type->type == ev_function && !d->scope)// function parms are ok
+		{
+//			f = G_FUNCTION(d->ofs);
+//			if (!f || (!f->code && !f->builtin) )
+			if (!d->initialized)
+			{
+				printf ("function %s was not defined\n",d->name);
+				errors = true;
+			}
+		}
+	}
+
+	return !errors;
+}
+
+//=============================================================================
+
+// FIXME: byte swap?
+
+// this is a 16 bit, non-reflected CRC using the polynomial 0x1021
+// and the initial and final xor values shown below...  in other words, the
+// CCITT standard CRC used by XMODEM
+
+#define CRC_INIT_VALUE	0xffff
+#define CRC_XOR_VALUE	0x0000
+
+static unsigned short crctable[256] =
+{
+	0x0000,	0x1021,	0x2042,	0x3063,	0x4084,	0x50a5,	0x60c6,	0x70e7,
+	0x8108,	0x9129,	0xa14a,	0xb16b,	0xc18c,	0xd1ad,	0xe1ce,	0xf1ef,
+	0x1231,	0x0210,	0x3273,	0x2252,	0x52b5,	0x4294,	0x72f7,	0x62d6,
+	0x9339,	0x8318,	0xb37b,	0xa35a,	0xd3bd,	0xc39c,	0xf3ff,	0xe3de,
+	0x2462,	0x3443,	0x0420,	0x1401,	0x64e6,	0x74c7,	0x44a4,	0x5485,
+	0xa56a,	0xb54b,	0x8528,	0x9509,	0xe5ee,	0xf5cf,	0xc5ac,	0xd58d,
+	0x3653,	0x2672,	0x1611,	0x0630,	0x76d7,	0x66f6,	0x5695,	0x46b4,
+	0xb75b,	0xa77a,	0x9719,	0x8738,	0xf7df,	0xe7fe,	0xd79d,	0xc7bc,
+	0x48c4,	0x58e5,	0x6886,	0x78a7,	0x0840,	0x1861,	0x2802,	0x3823,
+	0xc9cc,	0xd9ed,	0xe98e,	0xf9af,	0x8948,	0x9969,	0xa90a,	0xb92b,
+	0x5af5,	0x4ad4,	0x7ab7,	0x6a96,	0x1a71,	0x0a50,	0x3a33,	0x2a12,
+	0xdbfd,	0xcbdc,	0xfbbf,	0xeb9e,	0x9b79,	0x8b58,	0xbb3b,	0xab1a,
+	0x6ca6,	0x7c87,	0x4ce4,	0x5cc5,	0x2c22,	0x3c03,	0x0c60,	0x1c41,
+	0xedae,	0xfd8f,	0xcdec,	0xddcd,	0xad2a,	0xbd0b,	0x8d68,	0x9d49,
+	0x7e97,	0x6eb6,	0x5ed5,	0x4ef4,	0x3e13,	0x2e32,	0x1e51,	0x0e70,
+	0xff9f,	0xefbe,	0xdfdd,	0xcffc,	0xbf1b,	0xaf3a,	0x9f59,	0x8f78,
+	0x9188,	0x81a9,	0xb1ca,	0xa1eb,	0xd10c,	0xc12d,	0xf14e,	0xe16f,
+	0x1080,	0x00a1,	0x30c2,	0x20e3,	0x5004,	0x4025,	0x7046,	0x6067,
+	0x83b9,	0x9398,	0xa3fb,	0xb3da,	0xc33d,	0xd31c,	0xe37f,	0xf35e,
+	0x02b1,	0x1290,	0x22f3,	0x32d2,	0x4235,	0x5214,	0x6277,	0x7256,
+	0xb5ea,	0xa5cb,	0x95a8,	0x8589,	0xf56e,	0xe54f,	0xd52c,	0xc50d,
+	0x34e2,	0x24c3,	0x14a0,	0x0481,	0x7466,	0x6447,	0x5424,	0x4405,
+	0xa7db,	0xb7fa,	0x8799,	0x97b8,	0xe75f,	0xf77e,	0xc71d,	0xd73c,
+	0x26d3,	0x36f2,	0x0691,	0x16b0,	0x6657,	0x7676,	0x4615,	0x5634,
+	0xd94c,	0xc96d,	0xf90e,	0xe92f,	0x99c8,	0x89e9,	0xb98a,	0xa9ab,
+	0x5844,	0x4865,	0x7806,	0x6827,	0x18c0,	0x08e1,	0x3882,	0x28a3,
+	0xcb7d,	0xdb5c,	0xeb3f,	0xfb1e,	0x8bf9,	0x9bd8,	0xabbb,	0xbb9a,
+	0x4a75,	0x5a54,	0x6a37,	0x7a16,	0x0af1,	0x1ad0,	0x2ab3,	0x3a92,
+	0xfd2e,	0xed0f,	0xdd6c,	0xcd4d,	0xbdaa,	0xad8b,	0x9de8,	0x8dc9,
+	0x7c26,	0x6c07,	0x5c64,	0x4c45,	0x3ca2,	0x2c83,	0x1ce0,	0x0cc1,
+	0xef1f,	0xff3e,	0xcf5d,	0xdf7c,	0xaf9b,	0xbfba,	0x8fd9,	0x9ff8,
+	0x6e17,	0x7e36,	0x4e55,	0x5e74,	0x2e93,	0x3eb2,	0x0ed1,	0x1ef0
+};
+
+void CRC_Init(unsigned short *crcvalue)
+{
+	*crcvalue = CRC_INIT_VALUE;
+}
+
+void CRC_ProcessByte(unsigned short *crcvalue, byte data)
+{
+	*crcvalue = (*crcvalue << 8) ^ crctable[(*crcvalue >> 8) ^ data];
+}
+
+unsigned short CRC_Value(unsigned short crcvalue)
+{
+	return crcvalue ^ CRC_XOR_VALUE;
+}
+//=============================================================================
+
+/*
+============
+PR_WriteProgdefs
+
+Writes the global and entity structures out
+Returns a crc of the header, to be stored in the progs file for comparison
+at load time.
+============
+*/
+int	PR_WriteProgdefs (char *filename)
+{
+	def_t	*d;
+	FILE	*f;
+	unsigned short		crc;
+	int		c;
+	
+	printf ("writing %s\n", filename);
+	f = fopen (filename, "w");
+	
+// print global vars until the first field is defined
+	fprintf (f,"\n/* file generated by qcc, do not modify */\n\ntypedef struct\n{\tint\tpad[%i];\n", RESERVED_OFS);
+	for (d=pr.def_head.next ; d ; d=d->next)
+	{
+		if (!strcmp (d->name, "end_sys_globals"))
+			break;
+			
+		switch (d->type->type)
+		{
+		case ev_float:
+			fprintf (f, "\tfloat\t%s;\n",d->name);
+			break;
+		case ev_vector:
+			fprintf (f, "\tvec3_t\t%s;\n",d->name);
+			d=d->next->next->next;	// skip the elements
+			break;
+		case ev_string:
+			fprintf (f,"\tstring_t\t%s;\n",d->name);
+			break;
+		case ev_function:
+			fprintf (f,"\tfunc_t\t%s;\n",d->name);
+			break;
+		case ev_entity:
+			fprintf (f,"\tint\t%s;\n",d->name);
+			break;
+		default:
+			fprintf (f,"\tint\t%s;\n",d->name);
+			break;
+		}
+	}
+	fprintf (f,"} globalvars_t;\n\n");
+
+// print all fields
+	fprintf (f,"typedef struct\n{\n");
+	for (d=pr.def_head.next ; d ; d=d->next)
+	{
+		if (!strcmp (d->name, "end_sys_fields"))
+			break;
+			
+		if (d->type->type != ev_field)
+			continue;
+			
+		switch (d->type->aux_type->type)
+		{
+		case ev_float:
+			fprintf (f,"\tfloat\t%s;\n",d->name);
+			break;
+		case ev_vector:
+			fprintf (f,"\tvec3_t\t%s;\n",d->name);
+			d=d->next->next->next;	// skip the elements
+			break;
+		case ev_string:
+			fprintf (f,"\tstring_t\t%s;\n",d->name);
+			break;
+		case ev_function:
+			fprintf (f,"\tfunc_t\t%s;\n",d->name);
+			break;
+		case ev_entity:
+			fprintf (f,"\tint\t%s;\n",d->name);
+			break;
+		default:
+			fprintf (f,"\tint\t%s;\n",d->name);
+			break;
+		}
+	}
+	fprintf (f,"} entvars_t;\n\n");
+	
+	fclose (f);
+	
+// do a crc of the file
+	CRC_Init (&crc);
+	f = fopen (filename, "r+");
+	while ((c = fgetc(f)) != EOF)
+		CRC_ProcessByte (&crc, c);
+		
+	fprintf (f,"#define PROGHEADER_CRC %i\n", crc);
+	fclose (f);
+
+	return crc;
+}
+
+
+void PrintFunction (char *name)
+{
+	int		i;
+	dstatement_t	*ds;
+	dfunction_t		*df;
+	
+	for (i=0 ; i<numfunctions ; i++)
+		if (!strcmp (name, strings + functions[i].s_name))
+			break;
+	if (i==numfunctions)
+		Error ("No function names \"%s\"", name);
+	df = functions + i;	
+	
+	printf ("Statements for %s:\n", name);
+	ds = statements + df->first_statement;
+	while (1)
+	{
+		PR_PrintStatement (ds);
+		if (!ds->op)
+			break;
+		ds++;
+	}
+}
+
+/*
+==============================================================================
+
+DIRECTORY COPYING / PACKFILE CREATION
+
+==============================================================================
+*/
+
+typedef struct
+{
+	char	name[56];
+	int		filepos, filelen;
+} packfile_t;
+
+typedef struct
+{
+	char	id[4];
+	int		dirofs;
+	int		dirlen;
+} packheader_t;
+
+packfile_t	pfiles[4096], *pf;
+int			packhandle;
+int			packbytes;
+
+void Sys_mkdir (char *path)
+{
+#ifdef __MINGW32__
+        if (mkdir (path) != -1)
+#else
+        if (mkdir (path, 0777) != -1)
+#endif
+		return;
+	if (errno != EEXIST)
+		Error ("mkdir %s: %s",path, strerror(errno)); 
+}
+
+/*
+============
+CreatePath
+============
+*/
+void	CreatePath (char *path)
+{
+	char	*ofs;
+	
+	for (ofs = path+1 ; *ofs ; ofs++)
+	{
+		if (*ofs == '/')
+		{	// create the directory
+			*ofs = 0;
+			Sys_mkdir (path);
+			*ofs = '/';
+		}
+	}
+}
+
+
+/*
+===========
+PackFile
+
+Copy a file into the pak file
+===========
+*/
+void PackFile (char *src, char *name)
+{
+	int		in;
+	int		remaining, count;
+	char	buf[4096];
+	
+	if ( (byte *)pf - (byte *)pfiles > sizeof(pfiles) )
+		Error ("Too many files in pak file");
+	
+	in = SafeOpenRead (src);
+	remaining = filelength (in);
+
+	pf->filepos = LittleLong (lseek (packhandle, 0, SEEK_CUR));
+	pf->filelen = LittleLong (remaining);
+	strcpy (pf->name, name);
+	printf ("%64s : %7i\n", pf->name, remaining);
+
+	packbytes += remaining;
+	
+	while (remaining)
+	{
+		if (remaining < sizeof(buf))
+			count = remaining;
+		else
+			count = sizeof(buf);
+		SafeRead (in, buf, count);
+		SafeWrite (packhandle, buf, count);
+		remaining -= count;
+	}
+
+	close (in);
+	pf++;
+}
+
+
+/*
+===========
+CopyFile
+
+Copies a file, creating any directories needed
+===========
+*/
+void CopyFile (char *src, char *dest)
+{
+	int		in, out;
+	int		remaining, count;
+	char	buf[4096];
+	
+	printf ("%s to %s\n", src, dest);
+
+	in = SafeOpenRead (src);
+	remaining = filelength (in);
+	
+	CreatePath (dest);
+	out = SafeOpenWrite (dest);
+	
+	while (remaining)
+	{
+		if (remaining < sizeof(buf))
+			count = remaining;
+		else
+			count = sizeof(buf);
+		SafeRead (in, buf, count);
+		SafeWrite (out, buf, count);
+		remaining -= count;
+	}
+
+	close (in);
+	close (out);	
+}
+
+
+/*
+===========
+CopyFiles
+===========
+*/
+void CopyFiles (void)
+{
+	int		i, p;
+	char	srcdir[1024], destdir[1024];
+	char	srcfile[1024], destfile[1024];
+	int		copytype;
+	char	name[1024];
+	packheader_t	header;
+	int		dirlen;
+	int		blocknum;
+	unsigned short		crc;
+
+	printf ("%3i unique precache_sounds\n", numsounds);
+	printf ("%3i unique precache_models\n", nummodels);
+	
+	copytype = 0;
+
+	p = CheckParm ("-copy");
+	if (p && p < myargc-2)
+	{	// create a new directory tree
+		copytype = 1;
+
+		strcpy (srcdir, myargv[p+1]);
+		strcpy (destdir, myargv[p+2]);
+		if (srcdir[strlen(srcdir)-1] != '/')
+			strcat (srcdir, "/");
+		if (destdir[strlen(destdir)-1] != '/')
+			strcat (destdir, "/");
+	}
+
+	blocknum = 1;
+	p = CheckParm ("-pak2");
+	if (p && p <myargc-2)
+		blocknum = 2;
+	else
+		p = CheckParm ("-pak");
+	if (p && p < myargc-2)
+	{	// create a pak file
+		strcpy (srcdir, myargv[p+1]);
+		strcpy (destdir, myargv[p+2]);
+		if (srcdir[strlen(srcdir)-1] != '/')
+			strcat (srcdir, "/");
+		DefaultExtension (destdir, ".pak");
+
+		pf = pfiles;
+		packhandle = SafeOpenWrite (destdir);
+		SafeWrite (packhandle, &header, sizeof(header));	
+		copytype = 2;
+	}
+	
+	if (!copytype)
+		return;
+				
+	for (i=0 ; i<numsounds ; i++)
+	{
+		if (precache_sounds_block[i] != blocknum)
+			continue;
+		sprintf (name, "sound/%s", precache_sounds[i]);
+		sprintf (srcfile,"%s%s",srcdir, name);
+		sprintf (destfile,"%s%s",destdir, name);
+		if (copytype == 1)
+			CopyFile (srcfile, destfile);
+		else
+			PackFile (srcfile, name);
+	}
+	for (i=0 ; i<nummodels ; i++)
+	{
+		if (precache_models_block[i] != blocknum)
+			continue;
+		sprintf (srcfile,"%s%s",srcdir, precache_models[i]);
+		sprintf (destfile,"%s%s",destdir, precache_models[i]);
+		if (copytype == 1)
+			CopyFile (srcfile, destfile);
+		else
+			PackFile (srcfile, precache_models[i]);
+	}
+	for (i=0 ; i<numfiles ; i++)
+	{
+		if (precache_files_block[i] != blocknum)
+			continue;
+		sprintf (srcfile,"%s%s",srcdir, precache_files[i]);
+		sprintf (destfile,"%s%s",destdir, precache_files[i]);
+		if (copytype == 1)
+			CopyFile (srcfile, destfile);
+		else
+			PackFile (srcfile, precache_files[i]);
+	}
+	
+	if (copytype == 2)
+	{
+		header.id[0] = 'P';
+		header.id[1] = 'A';
+		header.id[2] = 'C';
+		header.id[3] = 'K';
+		dirlen = (byte *)pf - (byte *)pfiles;
+		header.dirofs = LittleLong(lseek (packhandle, 0, SEEK_CUR));
+		header.dirlen = LittleLong(dirlen);
+		
+		SafeWrite (packhandle, pfiles, dirlen);
+	
+		lseek (packhandle, 0, SEEK_SET);
+		SafeWrite (packhandle, &header, sizeof(header));
+		close (packhandle);	
+	
+	// do a crc of the file
+		CRC_Init (&crc);
+		for (i=0 ; i<dirlen ; i++)
+			CRC_ProcessByte (&crc, ((byte *)pfiles)[i]);
+	
+		i = pf - pfiles;
+		printf ("%i files packed in %i bytes (%i crc)\n",i, packbytes, crc);
+	}
+}
+
+//============================================================================
+
+/*
+============
+main
+============
+*/
+void main (int argc, char **argv)
+{
+	char	*src;
+	char	*src2;
+	char	filename[1024];
+	int		p, crc;
+	char	sourcedir[1024];
+
+	myargc = argc;
+	myargv = argv;
+	
+	if ( CheckParm ("-?") || CheckParm ("-help"))
+	{
+		printf ("qcc looks for progs.src in the current directory.\n");
+		printf ("to look in a different directory: qcc -src <directory>\n");
+		printf ("to build a clean data tree: qcc -copy <srcdir> <destdir>\n");
+		printf ("to build a clean pak file: qcc -pak <srcdir> <packfile>\n");
+		printf ("to bsp all bmodels: qcc -bspmodels <gamedir>\n");
+		return;
+	}
+	
+	p = CheckParm ("-src");
+	if (p && p < argc-1 )
+	{
+		strcpy (sourcedir, argv[p+1]);
+		strcat (sourcedir, "/");
+		printf ("Source directory: %s\n", sourcedir);
+	}
+	else
+		strcpy (sourcedir, "");
+
+	InitData ();
+	
+	sprintf (filename, "%sprogs.src", sourcedir);
+	LoadFile (filename, (void *)&src);
+	
+	src = COM_Parse (src);
+	if (!src)
+		Error ("No destination filename.  qcc -help for info.\n");
+	strcpy (destfile, com_token);
+	printf ("outputfile: %s\n", destfile);
+	
+	pr_dumpasm = false;
+
+	PR_BeginCompilation (malloc (0x100000), 0x100000);
+
+// compile all the files
+	do
+	{
+		src = COM_Parse(src);
+		if (!src)
+			break;
+		sprintf (filename, "%s%s", sourcedir, com_token);
+		printf ("compiling %s\n", filename);
+		LoadFile (filename, (void *)&src2);
+
+		if (!PR_CompileFile (src2, filename) )
+			exit (1);
+			
+	} while (1);
+	
+	if (!PR_FinishCompilation ())
+		Error ("compilation errors");
+
+	p = CheckParm ("-asm");
+	if (p)
+	{
+		for (p++ ; p<argc ; p++)
+		{
+			if (argv[p][0] == '-')
+				break;
+			PrintFunction (argv[p]);
+		}
+	}
+	
+	
+// write progdefs.h
+	crc = PR_WriteProgdefs ("progdefs.h");
+	
+// write data file
+	WriteData (crc);
+	
+// regenerate bmodels if -bspmodels
+	BspModels ();
+
+// report / copy the data files
+	CopyFiles ();
+}
+
+================
+File: qcc.h/qcc.h
+================
+/*  Copyright (C) 1996-1997  Id Software, Inc.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+    See file, 'COPYING', for details.
+*/
+
+#include "cmdlib.h"
+#include <stdio.h>
+#include <setjmp.h>
+
+#include "pr_comp.h"
+
+/*
+
+TODO:
+
+"stopped at 10 errors"
+
+other pointer types for models and clients?
+
+compact string heap?
+
+allways initialize all variables to something safe
+
+the def->type->type arrangement is really silly.
+
+return type checking
+
+parm count type checking
+
+immediate overflow checking
+
+pass the first two parms in call->b and call->c
+
+*/
+
+/*
+
+comments
+--------
+// comments discard text until the end of line
+/ *  * / comments discard all enclosed text (spaced out on this line because this documentation is in a regular C comment block, and typing them in normally causes a parse error)
+
+code structure
+--------------
+A definition is:
+	<type> <name> [ = <immediate>] {, <name> [ = <immediate>] };
+
+
+types
+-----
+simple types: void, float, vector, string, or entity
+	float		width, height;
+	string		name;
+	entity		self, other;
+
+vector types:
+	vector		org;	// also creates org_x, org_y, and org_z float defs
+	
+	
+A function type is specified as: 	simpletype ( type name {,type name} )
+The names are ignored except when the function is initialized.	
+	void()		think;
+	entity()	FindTarget;
+	void(vector destination, float speed, void() callback)	SUB_CalcMove;
+	void(...)	dprint;		// variable argument builtin
+
+A field type is specified as:  .type
+	.vector		origin;
+	.string		netname;
+	.void()		think, touch, use;
+	
+
+names
+-----
+Names are a maximum of 64 characters, must begin with A-Z,a-z, or _, and can continue with those characters or 0-9.
+
+There are two levels of scoping: global, and function.  The parameter list of a function and any vars declared inside a function with the "local" statement are only visible within that function, 
+
+
+immediates
+----------
+Float immediates must begin with 0-9 or minus sign.  .5 is illegal.
+	
+A parsing ambiguity is present with negative constants. "a-5" will be parsed as "a", then "-5", causing an error.  Seperate the - from the digits with a space "a - 5" to get the proper behavior.
+	12
+	1.6
+	0.5
+	-100
+
+Vector immediates are three float immediates enclosed in single quotes.
+	'0 0 0'
+	'20.5 -10 0.00001'
+	
+String immediates are characters enclosed in double quotes.  The string cannot contain explicit newlines, but the escape character \n can embed one.  The \" escape can be used to include a quote in the string.
+	"maps/jrwiz1.bsp"
+	"sound/nin/pain.wav"
+	"ouch!\n"
+
+Code immediates are statements enclosed in {} braces.
+statement:
+	{ <multiple statements> }
+	<expression>;
+	local <type> <name> [ = <immediate>] {, <name> [ = <immediate>] };
+	return <expression>;
+	if ( <expression> ) <statement> [ else <statement> ];
+	while ( <expression> ) <statement>;
+	do <statement> while ( <expression> );
+	<function name> ( <function parms> );
+	
+expression:
+	combiations of names and these operators with standard C precedence:
+	"&&", "||", "<=", ">=","==", "!=", "!", "*", "/", "-", "+", "=", ".", "<", ">", "&", "|"
+	Parenthesis can be used to alter order of operation.
+	The & and | operations perform integral bit ops on floats
+	
+A built in function immediate is a number sign followed by an integer.
+	#1
+	#12
+
+
+compilation
+-----------
+Source files are processed sequentially without dumping any state, so if a defs file is the first one processed, the definitions will be available to all other files.
+
+The language is strongly typed and there are no casts.
+
+Anything that is initialized is assumed to be constant, and will have immediates folded into it.  If you change the value, your program will malfunction.  All uninitialized globals will be saved to savegame files.
+
+Functions cannot have more than eight parameters.
+
+Error recovery during compilation is minimal.  It will skip to the next global definition, so you will never see more than one error at a time in a given function.  All compilation aborts after ten error messages.
+
+Names can be defined multiple times until they are defined with an initialization, allowing functions to be prototyped before their definition.
+
+void()	MyFunction;			// the prototype
+
+void()	MyFunction =		// the initialization
+{
+	dprint ("we're here\n");
+};
+
+
+entities and fields
+-------------------
+
+
+execution
+---------
+Code execution is initiated by C code in quake from two main places:  the timed think routines for periodic control, and the touch function when two objects impact each other.
+
+There are three global variables that are set before beginning code execution:
+	entity	world;		// the server's world object, which holds all global
+						// state for the server, like the deathmatch flags
+						// and the body ques.
+	entity	self;		// the entity the function is executing for
+	entity	other;		// the other object in an impact, not used for thinks
+	float	time;		// the current game time.  Note that because the
+						// entities in the world are simulated sequentially,
+						// time is NOT strictly increasing.  An impact late
+						// in one entity's time slice may set time higher
+						// than the think function of the next entity. 
+						// The difference is limited to 0.1 seconds.
+Execution is also caused by a few uncommon events, like the addition of a new client to an existing server.
+	
+There is a runnaway counter that stops a program if 100000 statements are executed, assuming it is in an infinite loop.
+
+It is acceptable to change the system set global variables.  This is usually done to pose as another entity by changing self and calling a function.
+
+The interpretation is fairly efficient, but it is still over an order of magnitude slower than compiled C code.  All time consuming operations should be made into built in functions.
+
+A profile counter is kept for each function, and incremented for each interpreted instruction inside that function.  The "profile" console command in Quake will dump out the top 10 functions, then clear all the counters.  The "profile all" command will dump sorted stats for every function that has been executed.
+
+
+afunc ( 4, bfunc(1,2,3));
+will fail because there is a shared parameter marshaling area, which will cause the 1 from bfunc to overwrite the 4 allready placed in parm0.  When a function is called, it copies the parms from the globals into it's privately scoped variables, so there is no collision when calling another function.
+
+total = factorial(3) + factorial(4);
+Will fail because the return value from functions is held in a single global area.  If this really gets on your nerves, tell me and I can work around it at a slight performance and space penalty by allocating a new register for the function call and copying it out.
+
+
+built in functions
+------------------
+void(string text)	dprint;
+Prints the string to the server console.
+
+void(entity client, string text)	cprint;
+Prints a message to a specific client.
+
+void(string text)	bprint;
+Broadcast prints a message to all clients on the current server.
+
+entity()	spawn;
+Returns a totally empty entity.  You can manually set everything up, or just set the origin and call one of the existing entity setup functions.
+
+entity(entity start, .string field, string match) find;
+Searches the server entity list beginning at start, looking for an entity that has entity.field = match.  To start at the beginning of the list, pass world.  World is returned when the end of the list is reached.
+
+<FIXME: define all the other functions...>
+
+
+gotchas
+-------
+
+The && and || operators DO NOT EARLY OUT like C!
+
+Don't confuse single quoted vectors with double quoted strings
+
+The function declaration syntax takes a little getting used to.
+
+Don't forget the ; after the trailing brace of a function initialization.
+
+Don't forget the "local" before defining local variables.
+
+There are no ++ / -- operators, or operate/assign operators.
+
+*/
+
+//=============================================================================
+
+// offsets are allways multiplied by 4 before using
+typedef int	gofs_t;				// offset in global data block
+typedef struct function_s function_t;
+
+#define	MAX_PARMS	8
+
+typedef struct type_s
+{
+	etype_t			type;
+	struct def_s	*def;		// a def that points to this type
+	struct type_s	*next;
+// function types are more complex
+	struct type_s	*aux_type;	// return type or field type
+	int				num_parms;	// -1 = variable args
+	struct type_s	*parm_types[MAX_PARMS];	// only [num_parms] allocated
+} type_t;
+
+typedef struct def_s
+{
+	type_t		*type;
+	char		*name;
+	struct def_s	*next;
+	gofs_t		ofs;
+	struct def_s	*scope;		// function the var was defined in, or NULL
+	int			initialized;	// 1 when a declaration included "= immediate"
+} def_t;
+
+//============================================================================
+
+// pr_loc.h -- program local defs
+
+#define	MAX_ERRORS		10
+
+#define	MAX_NAME		64		// chars long
+
+#define	MAX_REGS		16384
+
+//=============================================================================
+
+typedef union eval_s
+{
+	string_t			string;
+	float				_float;
+	float				vector[3];
+	func_t				function;
+	int					_int;
+	union eval_s		*ptr;
+} eval_t;	
+
+extern	int		type_size[8];
+extern	def_t	*def_for_type[8];
+
+extern	type_t	type_void, type_string, type_float, type_vector, type_entity, type_field, type_function, type_pointer, type_floatfield;
+
+extern	def_t	def_void, def_string, def_float, def_vector, def_entity, def_field, def_function, def_pointer;
+
+struct function_s
+{
+	int					builtin;	// if non 0, call an internal function
+	int					code;		// first statement
+	char				*file;		// source file with definition
+	int					file_line;
+	struct def_s		*def;
+	int					parm_ofs[MAX_PARMS];	// allways contiguous, right?
+};
+
+
+//
+// output generated by prog parsing
+//
+typedef struct
+{
+	char		*memory;
+	int			max_memory;
+	int			current_memory;
+	type_t		*types;
+	
+	def_t		def_head;		// unused head of linked list
+	def_t		*def_tail;		// add new defs after this and move it
+	
+	int			size_fields;
+} pr_info_t;
+
+extern	pr_info_t	pr;
+
+typedef struct
+{
+	char		*name;
+	char		*opname;
+	float		priority;
+	boolean	right_associative;
+	def_t		*type_a, *type_b, *type_c;
+} opcode_t;
+
+//============================================================================
+
+
+extern	opcode_t	pr_opcodes[99];		// sized by initialization
+
+extern	boolean	pr_dumpasm;
+
+extern	def_t		*pr_global_defs[MAX_REGS];	// to find def for a global variable
+
+typedef enum {
+tt_eof,			// end of file reached
+tt_name, 		// an alphanumeric name token
+tt_punct, 		// code punctuation
+tt_immediate,	// string, float, vector
+} token_type_t;
+
+extern	char		pr_token[2048];
+extern	token_type_t	pr_token_type;
+extern	type_t		*pr_immediate_type;
+extern	eval_t		pr_immediate;
+
+void PR_PrintStatement (dstatement_t *s);
+
+void PR_Lex (void);
+// reads the next token into pr_token and classifies its type
+
+type_t *PR_ParseType (void);
+char *PR_ParseName (void);
+
+boolean PR_Check (char *string);
+void PR_Expect (char *string);
+void PR_ParseError (char *error, ...);
+
+
+extern	jmp_buf		pr_parse_abort;		// longjump with this on parse error
+extern	int			pr_source_line;
+extern	char		*pr_file_p;
+
+void *PR_Malloc (int size);
+
+
+#define	OFS_NULL		0
+#define	OFS_RETURN		1
+#define	OFS_PARM0		4		// leave 3 ofs for each parm to hold vectors
+#define	OFS_PARM1		7
+#define	OFS_PARM2		10
+#define	OFS_PARM3		13
+#define	OFS_PARM4		16
+#define	RESERVED_OFS	28
+
+
+extern	def_t	*pr_scope;
+extern	int		pr_error_count;
+
+void PR_NewLine (void);
+def_t *PR_GetDef (type_t *type, char *name, def_t *scope, boolean allocate);
+
+void PR_PrintDefs (void);
+
+void PR_SkipToSemicolon (void);
+
+extern	char		pr_parm_names[MAX_PARMS][MAX_NAME];
+extern	boolean	pr_trace;
+
+#define	G_FLOAT(o) (pr_globals[o])
+#define	G_INT(o) (*(int *)&pr_globals[o])
+#define	G_VECTOR(o) (&pr_globals[o])
+#define	G_STRING(o) (strings + *(string_t *)&pr_globals[o])
+#define	G_FUNCTION(o) (*(func_t *)&pr_globals[o])
+
+char *PR_ValueString (etype_t type, void *val);
+
+void PR_ClearGrabMacros (void);
+
+boolean	PR_CompileFile (char *string, char *filename);
+
+extern	boolean	pr_dumpasm;
+
+extern	string_t	s_file;			// filename for function definition
+
+extern	def_t	def_ret, def_parms[MAX_PARMS];
+
+//=============================================================================
+
+#define	MAX_STRINGS		500000
+#define	MAX_GLOBALS		16384
+#define	MAX_FIELDS		1024
+#define	MAX_STATEMENTS	65536
+#define	MAX_FUNCTIONS	8192
+
+#define	MAX_SOUNDS		1024
+#define	MAX_MODELS		1024
+#define	MAX_FILES		1024
+#define	MAX_DATA_PATH	64
+
+extern	char	strings[MAX_STRINGS];
+extern	int		strofs;
+
+extern	dstatement_t	statements[MAX_STATEMENTS];
+extern	int			numstatements;
+extern	int			statement_linenums[MAX_STATEMENTS];
+
+extern	dfunction_t	functions[MAX_FUNCTIONS];
+extern	int			numfunctions;
+
+extern	float		pr_globals[MAX_REGS];
+extern	int			numpr_globals;
+
+extern	char	pr_immediate_string[2048];
+
+extern	char		precache_sounds[MAX_SOUNDS][MAX_DATA_PATH];
+extern	int			precache_sounds_block[MAX_SOUNDS];
+extern	int			numsounds;
+
+extern	char		precache_models[MAX_MODELS][MAX_DATA_PATH];
+extern	int			precache_models_block[MAX_SOUNDS];
+extern	int			nummodels;
+
+extern	char		precache_files[MAX_FILES][MAX_DATA_PATH];
+extern	int			precache_files_block[MAX_SOUNDS];
+extern	int			numfiles;
+
+int	CopyString (char *str);
+
+================
+File: readme.txt/readme.txt
+================
+This is the last major component of the quake utilities to be released.  To be honest, I have been a little reticent to release this because most of the actual qc code is basically rather embarassing crap.  The time never became available to even give it a good top to bottom going over.  I never spent any quality engineering time on my parts, American wrote a lot of qc code, and even Romero has a bit of work in there.  It is a mess.  If you look through the code and occasionally think "This is stupid!", you are probably right...
+
+The compiler itself can be drastically sped up by just replacing the symbol searches with binary trees or hashing.  We remotely compile on our alpha, so it hasn't been a big enough issue for me to do it, but as the code size grows and grows it will be done sooner or later.
+
+The resulting code is horribly nieve and space ineficient (twleve bytes / instruction).  If common subexpression removal was added, the instruction count could probably be cut nearly in half.  I would have liked to have done a better job at this, but this was my first compiler front end, and I had a ton of other things fighting for my time.  The next one will turn out better. (wow, I'm making a lot of excuses here, aren't I?)
+
+Qcc also performs some other maintenence functions for us, like rebuildinng all the brush models and making pak files, but those functions are only usefull if you have created all new data for everything.  models.qc and sprites.qc don't actually generate any code, they are just parsed by modelgen and spritegen and included for completeness.
+
+
+To modify the quake program code, set up a new game directory parallel with id1, and containing a "progs" subdirectory.  Copy all the .qc files and progs.src into that, and just run qcc from that directory.  That will compile all of the files listed in progs.src and (if there aren't any errors) generate a new progs.dat file in the parent directory.
+
+As a simple test, open the client.qc file, go to the ClientObituary function at the end, and change some of the messages.
+
+The directory structure will look something like:
+
+/quake/quake.exe
+/quake/id1/
+/quake/mygame/progs.dat
+/quake/mygame/progs/progs.src
+/quake/mygame/progs/world.qc
+/quake/mygame/progs/client.qc
+/quake/mygame/progs/... etc ...
+
+Run quake with "-game mygame", which will cause quake to look for data in the mygame directory before falling back to id1.  In this example, it will find the new progs.dat from mygame, and take everything else from id1.  You can type "path" at the quake console to verify the current search order of directories and pak files.  THIS WILL ONLY WORK WITH A REGISTERED VERSION OF QUAKE.
+
+The header qcc.h has the language spec and some documentation, but I'm not positive if it is all current.
+
+The only documentation for the various builtin functions I can offer is the source code used by quake.  See builtin.c.  Some of them are required to do things outside the scope of the qc world, and some are just there for speed reasons.
+
+PLEASE don't ask me questions about all this!
+
+
+John Carmack
+
+
+
+================================================================
+End of Codebase
+================================================================
