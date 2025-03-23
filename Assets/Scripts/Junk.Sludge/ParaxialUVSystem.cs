@@ -26,6 +26,163 @@ namespace Junk.Sludge
             double factor = math.pow(10, precision); 
             return new double3( math.round((vector.x + offset) * factor) / factor, math.round((vector.y + offset) * factor) / factor, math.round((vector.z + offset) * factor) / factor );
         }
+
+
+        public struct UvData
+        {
+            public float3 normal;
+            public float3 vertex;
+            
+            public int     m_index;
+            public double3 m_uAxis;
+            public double3 m_vAxis;
+            public double2 m_uv;
+
+            public BrushFaceAttributes attributes;
+        }
+
+        public static class ParaxialCoordinates
+        {
+            public static float2 GetTexcoords(float3 vertex, BrushFaceAttributes attributes, float3 normal, float2 textureSize)
+            {
+                // set rotation, not a method anymore (setRotation)
+                var data = new UvData
+                {
+                    normal     = normal,
+                    attributes = attributes,
+                    m_index    = PlaneNormalIndex(normal)
+                };
+                // same as axes
+                getAxes(ref data);
+                RotateAxes(ref data);
+                data.vertex = vertex;
+                
+                var uv   = (ComputeUVCoords(ref data, vertex, attributes.Scale()) + attributes.Offset()) / textureSize;
+                return uv;
+            }
+            
+            /// <summary>
+            /// Determines the index of the plane normal in the BaseAxes array
+            /// This matches the TrenchBroom implementation in ParaxialUVCoordSystem::planeNormalIndex
+            /// </summary>
+            private static int PlaneNormalIndex(float3 normal)
+            {
+                int   bestIndex = 0;
+                float bestDot   = 0;
+                // We have 6 sets, each storing normal/u/v in sequence => 6 * 3 = 18 total
+                // The normal is at BaseAxes[i*3 + 0].
+                for (int i = 0; i < 6; i++)
+                {
+                    var curDot = math.dot(normal, BaseAxes[i*3 + 0]);
+                    if (curDot > bestDot)
+                    {
+                        bestDot   = curDot;
+                        bestIndex = i;
+                    }
+                }
+                return bestIndex;
+            }
+            
+            private static void RotateAxes(ref UvData data)
+            {
+                var planeNormIndex = data.m_index;
+                var angleInRadians = math.radians((float)data.attributes.Rotation);
+                var rotAxis = math.cross(
+                    BaseAxes[planeNormIndex * 3 + 2], 
+                    BaseAxes[planeNormIndex * 3 + 1]);
+    
+                var rot = quaternion.AxisAngle(
+                    (float3)rotAxis, 
+                    (float)angleInRadians);
+
+                // Converting to Unity's math handling
+                double3 rotatedUAxis = Correct(math.rotate(rot, (float3)data.m_uAxis));
+                double3 rotatedVAxis = Correct(math.rotate(rot, (float3)data.m_vAxis));
+    
+                data.m_uAxis = rotatedUAxis;
+                data.m_vAxis = rotatedVAxis;
+            }
+            
+            private static float2 ComputeUVCoords(ref UvData data, float3 point, float2 scale)
+            {
+                var s = math.dot(point, data.m_uAxis)  / (scale.x == 0 ? 1e-5f : scale.x);
+                var t =  math.dot(point, data.m_vAxis) / (scale.y == 0 ? 1e-5f : scale.y);
+                return new float2((float)s, (float)t);
+            }
+            
+                
+            // This has been adapted from quake coordinates to unity
+            private static readonly float3[] BaseAxes = new float3[]
+            {
+                // Original: (0.0f, 0.0f, 1.0f) - Z-up normal
+                // Transformed: (0.0f, 1.0f, 0.0f) - Y-up normal
+                new float3(0.0f, 1.0f, 0.0f),  // 0
+                
+                // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+                new float3(1.0f, 0.0f, 0.0f),  // 1
+                
+                // Original: (0.0f, -1.0f, 0.0f) - -Y forward vAxis
+                // Transformed: (0.0f, 0.0f, -1.0f) - -Z forward vAxis
+                new float3(0.0f, 0.0f, -1.0f), // 2
+                
+                // Original: (0.0f, 0.0f, -1.0f) - -Z down normal
+                // Transformed: (0.0f, -1.0f, 0.0f) - -Y down normal
+                new float3(0.0f, -1.0f, 0.0f), // 3
+                
+                // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+                new float3(1.0f, 0.0f, 0.0f),  // 4
+                
+                // Original: (0.0f, -1.0f, 0.0f) - -Y forward vAxis
+                // Transformed: (0.0f, 0.0f, -1.0f) - -Z forward vAxis
+                new float3(0.0f, 0.0f, -1.0f), // 5
+                
+                // Original: (1.0f, 0.0f, 0.0f) - X-right normal
+                new float3(1.0f, 0.0f, 0.0f),  // 6
+                
+                // Original: (0.0f, 1.0f, 0.0f) - Y-up uAxis
+                // Transformed: (0.0f, 0.0f, 1.0f) - Z-up uAxis
+                new float3(0.0f, 0.0f, 1.0f),  // 7
+                
+                // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+                // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+                new float3(0.0f, -1.0f, 0.0f), // 8
+                
+                // Original: (-1.0f, 0.0f, 0.0f) - -X left normal
+                new float3(-1.0f, 0.0f, 0.0f), // 9
+                
+                // Original: (0.0f, 1.0f, 0.0f) - Y-up uAxis
+                // Transformed: (0.0f, 0.0f, 1.0f) - Z-up uAxis
+                new float3(0.0f, 0.0f, 1.0f),  // 10
+                
+                // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+                // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+                new float3(0.0f, -1.0f, 0.0f), // 11
+                
+                // Original: (0.0f, 1.0f, 0.0f) - Y-up normal
+                // Transformed: (0.0f, 0.0f, 1.0f) - Z-up normal
+                new float3(0.0f, 0.0f, 1.0f),  // 12
+                
+                // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+                new float3(1.0f, 0.0f, 0.0f),  // 13
+                
+                // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+                // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+                new float3(0.0f, -1.0f, 0.0f), // 14
+                
+                // Original: (0.0f, -1.0f, 0.0f) - -Y down normal
+                // Transformed: (0.0f, 0.0f, -1.0f) - -Z down normal
+                new float3(0.0f, 0.0f, -1.0f), // 15
+                
+                // Original: (1.0f, 0.0f, 0.0f) - X-right uAxis (unchanged)
+                new float3(1.0f, 0.0f, 0.0f),  // 16
+                
+                // Original: (0.0f, 0.0f, -1.0f) - -Z back vAxis
+                // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
+                new float3(0.0f, -1.0f, 0.0f)  // 17
+            };
+        }
+        
+        
         
         public class ParaxialUVCoordSystem
         {
@@ -119,9 +276,9 @@ namespace Junk.Sludge
         }
     
         // resides in brush file
-        public class BrushFaceAttributes
+        public struct BrushFaceAttributes
         {
-            public string MaterialName ;
+            public int MaterialName    ;
             public double XOffset      ;
             public double YOffset      ;
             public double Rotation     ;
@@ -143,7 +300,7 @@ namespace Junk.Sludge
                 return new BrushFaceAttributes
                 {
                     // Map Surface properties to BrushFaceAttributes
-                    MaterialName    = face.TextureName,  // TextureName maps to MaterialName
+                    MaterialName    = face.TextureName.GetHashCode(),  // TextureName maps to MaterialName
                     XOffset         = face.XShift,       // XShift likely aligns with XOffset
                     YOffset         = face.YShift,       // YShift likely aligns with YOffset
                     Rotation        = face.Rotation,     // Direct mapping
@@ -158,6 +315,8 @@ namespace Junk.Sludge
                 };
             }
         }
+        
+        // This has been adapted from quake coordinates to unity
         private static readonly float3[] BaseAxes = new float3[]
         {
             // Original: (0.0f, 0.0f, 1.0f) - Z-up normal
@@ -226,6 +385,7 @@ namespace Junk.Sludge
             // Transformed: (0.0f, -1.0f, 0.0f) - -Y back vAxis
             new float3(0.0f, -1.0f, 0.0f)  // 17
         };
+        
         // BaseAxes array that is used in the TrenchBroom implementation
         // This matches the axes array in ParaxialUVCoordSystem.cpp
         private static readonly float3[] TBBaseAxes = new float3[]
@@ -280,6 +440,12 @@ namespace Junk.Sludge
                 BaseAxes[index *3 + 2],
                 BaseAxes[index *3 + 0]
             );
+        }
+        
+        public static void getAxes(ref UvData data)
+        {
+            data.m_uAxis = BaseAxes[data.m_index * 3 + 1];
+            data.m_vAxis = BaseAxes[data.m_index * 3 + 2];
         }
         
         static (float3, float3, float3) uvAxesFromFacePlane(Plane plane)

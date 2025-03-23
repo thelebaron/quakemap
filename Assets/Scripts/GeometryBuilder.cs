@@ -97,9 +97,10 @@ namespace ScriptsSandbox.Util
             // INVERT THE NORMAL by negating it
             var normal    = -face.Plane.Normal.AsVector3(true);       // true means swap Y and Z, negated to invert
             var plane     = new Plane(normal, -face.Plane.D * scale); // Scale plane distance and negate it
-            {
+            
+                // debugging only, not necessary for final mesh data
                 qFace.Normal = normal;
-            }
+            
             
             // Convert vertices from Sledge to Unity coordinate system (swap Y and Z)
             var vertices = face.Vertices.Select(v => new float3(v.X, v.Z, v.Y)).ToList();
@@ -114,6 +115,8 @@ namespace ScriptsSandbox.Util
                 var    faceAttribs = Paraxial.BrushFaceAttributes.GetFromFace(face);
                 var    uvSystem    = new Paraxial.ParaxialUVCoordSystem(normal, faceAttribs);
                 float2 uv          = uvSystem.uvCoords(vertex, faceAttribs, textureSize);
+                
+                uv = Paraxial.ParaxialCoordinates.GetTexcoords(vertex, faceAttribs, normal, textureSize);
                 // flip it for unity
                 uv.y               = -uv.y;
                 vertexToUV[vertex] = uv;
