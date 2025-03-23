@@ -116,6 +116,7 @@ namespace ScriptsSandbox.Util
                 var    uvSystem    = new Paraxial.ParaxialUVCoordSystem(normal, faceAttribs);
                 float2 uv          = uvSystem.uvCoords(vertex, faceAttribs, textureSize);
                 
+                // this is our job friendly utility that replicates the first class based instance 
                 uv = Paraxial.ParaxialCoordinates.GetTexcoords(vertex, faceAttribs, normal, textureSize);
                 // flip it for unity
                 uv.y               = -uv.y;
